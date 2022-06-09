@@ -1,5 +1,5 @@
-mod channel;
+pub mod channel;
 
-mod command;
+pub mod command;
 
-mod instance;
+pub mod instance;
