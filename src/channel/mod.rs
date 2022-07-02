@@ -4,12 +4,14 @@ use std::net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpStream};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::Local;
+use crate::command::HeaderPacket;
 
 
-pub trait SocketChannel {
+pub trait TcpSocketChannel {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
-    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: i64) -> std::result::Result<usize, Error>;
+    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: usize) -> Result<usize>;
+    fn read_len(&mut self, len: usize) -> Box<[u8]>;
     fn is_connected(&self) -> bool;
     fn get_remote_address(&self) -> Option<SocketAddrV4>;
     fn get_local_address(&self) -> Option<SocketAddrV4>;
@@ -30,8 +32,8 @@ const SO_TIMEOUT: i32 = 1000;
 
 
 impl TcpChannel {
-    pub fn new(addr: &str, port: u16) -> TcpChannel {
-        let channel = TcpStream::connect(format!("{}:{}", addr, port)).map(|channel| {
+    pub fn new(addr: &str, port: u16) -> Result<TcpChannel> {
+        TcpStream::connect(format!("{}:{}", addr, port)).map(|channel| {
             let addr = Ipv4Addr::from_str(addr).map(|addr| {
                 SocketAddrV4::new(addr, port)
             }).unwrap();
@@ -40,12 +42,11 @@ impl TcpChannel {
                 address: Option::Some(addr),
                 is_connected: true,
             }
-        }).unwrap();
-        channel
+        })
     }
 }
 
-impl SocketChannel for TcpChannel {
+impl TcpSocketChannel for TcpChannel {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         let size = self.channel.write(buf)?;
         Ok(size)
@@ -55,7 +56,7 @@ impl SocketChannel for TcpChannel {
         self.channel.read(buf)
     }
 
-    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: i64) -> std::result::Result<usize, Error> {
+    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: usize) -> Result<usize> {
         let now = Local::now().timestamp_millis();
         let mut remain = buf.len();
         loop {
@@ -66,11 +67,25 @@ impl SocketChannel for TcpChannel {
             if remain as i64 <= 0 {
                 break;
             }
-            if Local::now().timestamp_millis() - now > timeout {
+            if Local::now().timestamp_millis() - now > timeout as i64 {
                 return std::result::Result::Err(Error::from(ErrorKind::TimedOut));
             }
         }
         std::result::Result::Ok(buf.len() - remain)
+    }
+
+    fn read_len(&mut self, mut len: usize) -> Box<[u8]> {
+        let mut out = vec![];
+        loop {
+            let mut tmp = [0u8; 1];
+            let size = self.channel.read(&mut tmp).unwrap();
+            out.push(tmp[0]);
+            len -= size;
+            if len as i64 <= 0 {
+                break;
+            }
+        }
+        Box::from(out)
     }
 
     fn is_connected(&self) -> bool {
@@ -102,4 +117,5 @@ impl SocketChannel for TcpChannel {
 }
 
 
-mod mysql_socket;
+pub mod mysql_socket;
+pub mod read_write_packet;
