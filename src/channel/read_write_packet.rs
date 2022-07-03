@@ -1,11 +1,10 @@
-use std::ops::Range;
 use crate::channel::TcpSocketChannel;
 use crate::command::{HeaderPacket, Packet};
 
 pub fn read_header(ch: &mut Box<dyn TcpSocketChannel>) -> Option<HeaderPacket> {
     let mut packet = HeaderPacket::new();
     let mut buf = [0 as u8; 4];
-    ch.read(&mut buf).map_or(Option::None, |f| {
+    ch.read(&mut buf).map_or(Option::None, |_f| {
         packet.from_bytes(&buf);
         Option::Some(packet)
     })
@@ -20,7 +19,7 @@ pub fn read_header_timeout(ch: &mut Box<dyn TcpSocketChannel>, timeout: u32) -> 
     })
 }
 
-pub fn read_bytes(ch:&mut  Box<dyn TcpSocketChannel>, len: i64) -> Box<[u8]> {
+pub fn read_bytes(ch:& mut  Box<dyn TcpSocketChannel>, len: i64) ->  Box<[u8]> {
     ch.read_len(len)
 }
 

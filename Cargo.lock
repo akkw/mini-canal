@@ -32,6 +32,7 @@ name = "mysql_binlog_parse"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "sha1_smol",
 ]
 
 [[package]]
@@ -52,6 +53,12 @@ checksum = "578ede34cf02f8924ab9447f50c28075b4d3e5b269972345e7e0372b38c6cdcd"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae1a47186c03a32177042e55dbc5fd5aee900b8e0069a8d70fba96a9375cd012"
 
 [[package]]
 name = "time"

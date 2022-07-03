@@ -1,10 +1,7 @@
-use std::fmt::format;
 use std::io::{Read, Write, Result, Error, ErrorKind};
-use std::net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpStream};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::Local;
-use crate::command::HeaderPacket;
 
 
 pub trait TcpSocketChannel {
@@ -63,19 +60,14 @@ impl TcpSocketChannel for TcpChannel {
             let mut tmp = [0u8; 1];
             let size = self.channel.read(&mut tmp)?;
             buf[buf.len() - remain] = tmp[0];
-            println!("{}",tmp[0]);
-            for b in 0..buf.len() {
-                print!("{} ",buf[b]);
-            }
-            print!("\n");
             remain -= size;
             if remain as i64 <= 0 {
                 break;
             }
 
-            // if Local::now().timestamp_millis() - now > timeout as i64 {
-            //     return std::result::Result::Err(Error::from(ErrorKind::TimedOut));
-            // }
+            if Local::now().timestamp_millis() - now > timeout as i64 {
+                return std::result::Result::Err(Error::from(ErrorKind::TimedOut));
+            }
         }
         std::result::Result::Ok(buf.len() - remain)
     }

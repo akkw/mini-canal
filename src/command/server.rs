@@ -1,11 +1,36 @@
 use std::fmt;
-use std::fmt::{Formatter, write};
+use std::fmt::{Formatter};
 use crate::command::{*};
 
 pub struct AuthSwitchRequestMoreData<'a> {
     command: u8,
     status: i32,
     auth_data: &'a [u8],
+}
+
+impl<'a> AuthSwitchRequestMoreData<'a> {
+    pub fn new() -> Self {
+        Self { command: 0, status: 0, auth_data: &[] }
+    }
+
+    pub fn command(&self) -> u8 {
+        self.command
+    }
+    pub fn status(&self) -> i32 {
+        self.status
+    }
+    pub fn auth_data(&self) -> &'a [u8] {
+        self.auth_data
+    }
+
+
+
+    pub fn set_status(&mut self, status: i32) {
+        self.status = status;
+    }
+    pub fn set_auth_data(&mut self, auth_data: &'a [u8]) {
+        self.auth_data = auth_data;
+    }
 }
 
 impl<'a> AuthSwitchRequestMoreData<'a> {
@@ -35,6 +60,30 @@ pub struct AuthSwitchRequestPacket<'a> {
     command: u8,
     auth_name: &'a str,
     auth_data: &'a [u8],
+}
+
+impl <'a>AuthSwitchRequestPacket<'a> {
+    pub fn new() -> Self {
+        Self { command: 0, auth_name: "", auth_data: &[] }
+    }
+
+
+    pub fn command(&self) -> u8 {
+        self.command
+    }
+    pub fn auth_name(&self) -> &'a str {
+        self.auth_name
+    }
+    pub fn auth_data(&self) -> &'a [u8] {
+        self.auth_data
+    }
+
+    pub fn set_auth_name(&mut self, auth_name: &'a str) {
+        self.auth_name = auth_name;
+    }
+    pub fn set_auth_data(&mut self, auth_data: &'a [u8]) {
+        self.auth_data = auth_data;
+    }
 }
 
 impl<'a> AuthSwitchRequestPacket<'a> {
@@ -169,6 +218,43 @@ impl<'a> ErrorPacket<'a> {
             message: "",
         }
     }
+
+    pub fn header(&self) -> &HeaderPacket {
+        &self.header
+    }
+    pub fn field_count(&self) -> u8 {
+        self.field_count
+    }
+    pub fn error_number(&self) -> u16 {
+        self.error_number
+    }
+    pub fn sql_state_marker(&self) -> u8 {
+        self.sql_state_marker
+    }
+    pub fn sql_state(&self) -> &'a [u8] {
+        self.sql_state
+    }
+    pub fn message(&self) -> &'a str {
+        self.message
+    }
+    pub fn set_header(&mut self, header: HeaderPacket) {
+        self.header = header;
+    }
+    pub fn set_field_count(&mut self, field_count: u8) {
+        self.field_count = field_count;
+    }
+    pub fn set_error_number(&mut self, error_number: u16) {
+        self.error_number = error_number;
+    }
+    pub fn set_sql_state_marker(&mut self, sql_state_marker: u8) {
+        self.sql_state_marker = sql_state_marker;
+    }
+    pub fn set_sql_state(&mut self, sql_state: &'a [u8]) {
+        self.sql_state = sql_state;
+    }
+    pub fn set_message(&mut self, message: &'a str) {
+        self.message = message;
+    }
 }
 
 impl<'a> fmt::Display for ErrorPacket<'a> {
@@ -287,7 +373,7 @@ impl<'a> HandshakeInitializationPacket<'a> {
     pub fn protocol_version(&self) -> u8 {
         self.protocol_version
     }
-    pub fn server_version(&self) -> &'a str {
+    pub fn server_version(&self) -> &str {
         self.server_version
     }
     pub fn thread_id(&self) -> u32 {
@@ -336,7 +422,7 @@ impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
             index += 2;
             let capability_flags2 = read_unsigned_short_little_endian(&buf[index..index + 2]);
             index += 2;
-            let capabilities = (((capability_flags2 as i32) << 16) | self.server_capabilities as i32);
+            let capabilities = ((capability_flags2 as i32) << 16) | self.server_capabilities as i32;
             // int authPluginDataLen = -1;
             // if ((capabilities & Capability.CLIENT_PLUGIN_AUTH) != 0) {
             // authPluginDataLen = data[index];

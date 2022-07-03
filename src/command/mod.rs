@@ -1,5 +1,4 @@
 use std::borrow::Borrow;
-use std::slice::SliceIndex;
 use std::str::{*};
 use msc::{*};
 use capability::{*};
@@ -7,15 +6,15 @@ use capability::{*};
 pub mod msc {
     pub const DEFAULT_PROTOCOL_VERSION: u8 = 0x0a;
     pub const NULL_TERMINATED_STRING_DELIMITER: u8 = 0x00;
-    pub const MAX_PACKET_LENGTH: i32 = (1 << 24);
-    pub const HEADER_PACKET_LENGTH_FIELD_LENGTH: i32 = 3;
-    pub const HEADER_PACKET_LENGTH_FIELD_OFFSET: i32 = 0;
-    pub const HEADER_PACKET_LENGTH: i32 = 4;
-    pub const HEADER_PACKET_NUMBER_FIELD_LENGTH: i32 = 1;
-    pub const FIELD_COUNT_FIELD_LENGTH: i32 = 1;
-    pub const EVENT_TYPE_OFFSET: i32 = 4;
-    pub const EVENT_LEN_OFFSET: i32 = 9;
-    pub const DEFAULT_BINLOG_FILE_START_POSITION: i64 = 4;
+    pub const MAX_PACKET_LENGTH: u32 = 1 << 24;
+    pub const _HEADER_PACKET_LENGTH_FIELD_LENGTH: i32 = 3;
+    pub const _HEADER_PACKET_LENGTH_FIELD_OFFSET: i32 = 0;
+    pub const _HEADER_PACKET_LENGTH: i32 = 4;
+    pub const _HEADER_PACKET_NUMBER_FIELD_LENGTH: i32 = 1;
+    pub const _FIELD_COUNT_FIELD_LENGTH: i32 = 1;
+    pub const _EVENT_TYPE_OFFSET: i32 = 4;
+    pub const _EVENT_LEN_OFFSET: i32 = 9;
+    pub const _DEFAULT_BINLOG_FILE_START_POSITION: i64 = 4;
 }
 
 pub mod capability {
@@ -188,6 +187,9 @@ pub trait Packet<'a> {
 
 pub mod server;
 
+
+pub mod client;
+
 /**
  * <pre>
  * Offset  Length     Description
@@ -237,12 +239,7 @@ impl HeaderPacket {
 impl<'a> Packet<'a> for HeaderPacket {
     #[allow(arithmetic_overflow)]
     fn from_bytes(&mut self, buf: &'a [u8]) {
-        let i = buf[0];
-        let i1 = buf[1];
-        let i2 = buf[2];
-        let i3 = buf[3];
-        println!("{} {} {} {}", i, i1, i2, i3);
-        self.packet_body_length = ((i & 0xFF) as i64 | (((buf[1] & 0xFF) as i64) << 8) as i64 | (((buf[2] & 0xFF) as i64) << 16) as i64);
+        self.packet_body_length = (buf[0] & 0xFF) as i64 | (((buf[1] & 0xFF) as i64) << 8) as i64 | (((buf[2] & 0xFF) as i64) << 16) as i64;
         self.set_packet_sequence_number(buf[3]);
     }
 
@@ -279,8 +276,8 @@ fn read_unsigned_short_little_endian_index(buf: &[u8], index: usize) -> u16 {
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_integer_little_endian(buf: &[u8]) -> u32 {
-    ((buf[0] as u8 & 0xFF) as u32 | ((buf[1] as u32 & 0xFF) << 8)
-        | ((buf[2] as u32 & 0xFF) << 16) | ((buf[3] as u32 & 0xFF) << 24))
+    (buf[0] as u8 & 0xFF) as u32 | ((buf[1] as u32 & 0xFF) << 8)
+        | ((buf[2] as u32 & 0xFF) << 16) | ((buf[3] as u32 & 0xFF) << 24)
 }
 
 #[allow(arithmetic_overflow)]
@@ -293,7 +290,7 @@ fn read_unsigned_long_little_endian_index(buf: &[u8], index: usize) -> u64 {
     let mut accumulation = 0;
     let mut shift_by = 0;
     for index in index..index + 8 {
-        accumulation |= (((buf[index] & 0xff) as u64) << shift_by);
+        accumulation |= ((buf[index] & 0xff) as u64) << shift_by;
         shift_by += 8;
     }
     accumulation as u64
@@ -357,4 +354,67 @@ fn read_null_terminated_bytes(buf: &[u8]) -> &[u8] {
         size += 1;
     }
     &buf[0..size]
+}
+
+pub fn write_header_and_body(header: &[u8], body: &[u8]) -> Box<[u8]> {
+    let mut out = vec![];
+    for i in 0..header.len() {
+        out.push(header[i]);
+    }
+    for i in 0..body.len() {
+        out.push(body[i]);
+    }
+    Box::from(out)
+}
+
+pub fn write_unsigned_int_little_endian(src: u32, out: &mut Vec<u8>) {
+    out.push((src & 0xFF) as u8);
+    out.push((src >> 8) as u8);
+    out.push((src >> 16) as u8);
+    out.push((src >> 24) as u8);
+}
+pub fn write_unsigned_short_little_endian_vec(src: u32, out: &mut Vec<u8>) {
+    out.push((src & 0xFF) as u8);
+    out.push((src >> 8) as u8);
+}
+
+pub fn write_unsigned_medium_little_endian(src: u32, out: &mut Vec<u8>) {
+    out.push((src & 0xFF) as u8);
+    out.push((src >> 8) as u8);
+    out.push((src >> 16) as u8);
+}
+pub fn write_null_terminated_string(src: &str, out: &mut Vec<u8>) {
+    let bytes = src.as_bytes();
+    for i in 0..bytes.len() {
+        out.push(bytes[i]);
+    }
+    out.push(msc::NULL_TERMINATED_STRING_DELIMITER)
+}
+pub fn write_null_terminated(src: &[u8], out: &mut Vec<u8>) {
+    for i in 0..src.len() {
+        out.push(src[i]);
+    }
+    out.push(msc::NULL_TERMINATED_STRING_DELIMITER)
+}
+
+
+
+fn write_binary_coded_length_bytes(src: &[u8], out: &mut Vec<u8>) {
+    // 1. write length byte/bytes
+    if src.len() < 252 {
+        out.push(src.len() as u8);
+    } else if src.len() < (1 << 16) {
+        out.push(252);
+        write_unsigned_short_little_endian_vec(src.len() as u32, out);
+    } else if src.len() < (1 << 24) {
+        out.push(253);
+        write_unsigned_medium_little_endian(src.len() as u32, out);
+    } else {
+        out.push(254);
+        write_unsigned_int_little_endian(src.len() as u32, out);
+    }
+    // 2. write real data followed length byte/bytes
+    for i in 0..src.len() {
+        out.push(src[i])
+    }
 }
