@@ -10,8 +10,8 @@ use crate::command::HeaderPacket;
 pub trait TcpSocketChannel {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
-    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: usize) -> Result<usize>;
-    fn read_len(&mut self, len: usize) -> Box<[u8]>;
+    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: u32) -> Result<usize>;
+    fn read_len(&mut self, len: i64) -> Box<[u8]>;
     fn is_connected(&self) -> bool;
     fn get_remote_address(&self) -> Option<SocketAddrV4>;
     fn get_local_address(&self) -> Option<SocketAddrV4>;
@@ -56,29 +56,35 @@ impl TcpSocketChannel for TcpChannel {
         self.channel.read(buf)
     }
 
-    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: usize) -> Result<usize> {
+    fn read_with_timeout(&mut self, buf: &mut [u8], timeout: u32) -> Result<usize> {
         let now = Local::now().timestamp_millis();
         let mut remain = buf.len();
         loop {
             let mut tmp = [0u8; 1];
             let size = self.channel.read(&mut tmp)?;
             buf[buf.len() - remain] = tmp[0];
+            println!("{}",tmp[0]);
+            for b in 0..buf.len() {
+                print!("{} ",buf[b]);
+            }
+            print!("\n");
             remain -= size;
             if remain as i64 <= 0 {
                 break;
             }
-            if Local::now().timestamp_millis() - now > timeout as i64 {
-                return std::result::Result::Err(Error::from(ErrorKind::TimedOut));
-            }
+
+            // if Local::now().timestamp_millis() - now > timeout as i64 {
+            //     return std::result::Result::Err(Error::from(ErrorKind::TimedOut));
+            // }
         }
         std::result::Result::Ok(buf.len() - remain)
     }
 
-    fn read_len(&mut self, mut len: usize) -> Box<[u8]> {
+    fn read_len(&mut self, mut len: i64) -> Box<[u8]> {
         let mut out = vec![];
         loop {
             let mut tmp = [0u8; 1];
-            let size = self.channel.read(&mut tmp).unwrap();
+            let size = self.channel.read(&mut tmp).unwrap() as i64;
             out.push(tmp[0]);
             len -= size;
             if len as i64 <= 0 {

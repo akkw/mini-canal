@@ -1,6 +1,8 @@
+use std::fmt;
+use std::fmt::{Formatter, write};
 use crate::command::{*};
 
-struct AuthSwitchRequestMoreData<'a> {
+pub struct AuthSwitchRequestMoreData<'a> {
     command: u8,
     status: i32,
     auth_data: &'a [u8],
@@ -29,7 +31,7 @@ impl<'a, 'b: 'a> Packet<'b> for AuthSwitchRequestMoreData<'a> {
     }
 }
 
-struct AuthSwitchRequestPacket<'a> {
+pub struct AuthSwitchRequestPacket<'a> {
     command: u8,
     auth_name: &'a str,
     auth_data: &'a [u8],
@@ -62,15 +64,41 @@ impl<'a, 'b: 'a> Packet<'b> for AuthSwitchRequestPacket<'a> {
     }
 }
 
-struct HeaderPacket {
-    packet_body_length: i32,
+pub struct HeaderPacket {
+    packet_body_length: usize,
     packet_sequence_number: u8,
+}
+
+impl HeaderPacket {
+    pub fn new() -> Self {
+        Self { packet_body_length: 0, packet_sequence_number: 0 }
+    }
+
+    pub fn packet_body_length(&self) -> usize {
+        self.packet_body_length
+    }
+    pub fn packet_sequence_number(&self) -> u8 {
+        self.packet_sequence_number
+    }
+
+    pub fn set_packet_body_length(&mut self, packet_body_length: usize) {
+        self.packet_body_length = packet_body_length;
+    }
+    pub fn set_packet_sequence_number(&mut self, packet_sequence_number: u8) {
+        self.packet_sequence_number = packet_sequence_number;
+    }
+}
+
+impl fmt::Display for HeaderPacket {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "packet_body_length: {}, packet_sequence_number: {}", self.packet_body_length, self.packet_sequence_number)
+    }
 }
 
 impl<'b> Packet<'b> for HeaderPacket {
     #[allow(arithmetic_overflow)]
     fn from_bytes(&mut self, buf: &[u8]) {
-        self.packet_body_length = ((buf[0] & 0xFF) | ((buf[1] & 0xFF) << 8) | ((buf[2] & 0xFF) << 16)) as i32;
+        self.packet_body_length = ((buf[0] & 0xFF) | ((buf[1] & 0xFF) << 8) | ((buf[2] & 0xFF) << 16)) as usize;
         self.packet_sequence_number = buf[3];
     }
 
@@ -91,7 +119,7 @@ impl HeaderPacket {
 }
 
 
-struct EOFPacket {
+pub struct EOFPacket {
     header: HeaderPacket,
     field_count: u8,
     warning_count: u16,
@@ -120,7 +148,7 @@ impl<'a> Packet<'a> for EOFPacket {
     }
 }
 
-struct ErrorPacket<'a> {
+pub struct ErrorPacket<'a> {
     header: HeaderPacket,
     field_count: u8,
     error_number: u16,
@@ -131,18 +159,24 @@ struct ErrorPacket<'a> {
 
 
 impl<'a> ErrorPacket<'a> {
-    fn new() -> ErrorPacket<'a> {
+    pub fn new() -> ErrorPacket<'a> {
         ErrorPacket {
             header: HeaderPacket { packet_body_length: 0, packet_sequence_number: 0 },
             field_count: 0,
             error_number: 0,
             sql_state_marker: 0,
-            sql_state: [0 as u8, 1].borrow(),
+            sql_state: &[],
             message: "",
         }
     }
 }
 
+impl<'a> fmt::Display for ErrorPacket<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "header: {}, field_count:{}, error_number: {}, sql_state_marker: {}， sql_state len: {}, message: {}",
+               self.header, self.field_count, self.error_number, self.sql_state_marker, self.sql_state.len(), self.message)
+    }
+}
 
 impl<'a, 'b: 'a> Packet<'b> for ErrorPacket<'a> {
     fn from_bytes(&mut self, buf: &'b [u8]) {
@@ -167,7 +201,7 @@ impl<'a, 'b: 'a> Packet<'b> for ErrorPacket<'a> {
     }
 }
 
-struct FieldPacket<'a> {
+pub struct FieldPacket<'a> {
     header: HeaderPacket,
     catalog: &'a str,
     db: &'a str,
@@ -219,7 +253,7 @@ impl<'a, 'b : 'a> Packet<'b> for FieldPacket<'a> {
 }
 
 
-struct HandshakeInitializationPacket<'a> {
+pub struct HandshakeInitializationPacket<'a> {
     header: HeaderPacket,
     protocol_version: u8,
     server_version: &'a str,
@@ -232,6 +266,52 @@ struct HandshakeInitializationPacket<'a> {
     auth_plugin_name: &'a [u8],
 }
 
+impl<'a> HandshakeInitializationPacket<'a> {
+    pub fn new() -> Self {
+        Self {
+            header: HeaderPacket::new(),
+            protocol_version: 0,
+            server_version: "",
+            thread_id: 0,
+            seed: &[],
+            server_capabilities: 0,
+            server_charset_number: 0,
+            server_status: 0,
+            rest_of_scramble_buff: &[],
+            auth_plugin_name: &[],
+        }
+    }
+    pub fn header(&self) -> &HeaderPacket {
+        &self.header
+    }
+    pub fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    pub fn server_version(&self) -> &'a str {
+        self.server_version
+    }
+    pub fn thread_id(&self) -> u32 {
+        self.thread_id
+    }
+    pub fn seed(&self) -> &'a [u8] {
+        self.seed
+    }
+    pub fn server_capabilities(&self) -> u16 {
+        self.server_capabilities
+    }
+    pub fn server_charset_number(&self) -> u8 {
+        self.server_charset_number
+    }
+    pub fn server_status(&self) -> u16 {
+        self.server_status
+    }
+    pub fn rest_of_scramble_buff(&self) -> &'a [u8] {
+        self.rest_of_scramble_buff
+    }
+    pub fn auth_plugin_name(&self) -> &'a [u8] {
+        self.auth_plugin_name
+    }
+}
 
 impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
     #[allow(arithmetic_overflow)]
@@ -239,10 +319,10 @@ impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
         let mut index = 0;
         self.protocol_version = buf[index];
         index += 1;
-        let server_version_bytes = read_null_terminated_bytes(buf);
+        let server_version_bytes = read_null_terminated_bytes(&buf[index..]);
         self.server_version = from_utf8(server_version_bytes).unwrap();
         index += server_version_bytes.len() + 1;
-        self.thread_id = read_unsigned_integer_little_endian(buf);
+        self.thread_id = read_unsigned_integer_little_endian(&buf[index..index+4]);
         index += 4;
         self.seed = &buf[index..index + 8];
         index += 8;
@@ -255,7 +335,8 @@ impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
             self.server_status = read_unsigned_short_little_endian(&buf[index..index + 2]);
             index += 2;
             let capability_flags2 = read_unsigned_short_little_endian(&buf[index..index + 2]);
-            let capabilities = ((capability_flags2 << 16) | self.server_capabilities) as i32;
+            index += 2;
+            let capabilities = (((capability_flags2 as i32) << 16) | self.server_capabilities as i32);
             // int authPluginDataLen = -1;
             // if ((capabilities & Capability.CLIENT_PLUGIN_AUTH) != 0) {
             // authPluginDataLen = data[index];
@@ -275,7 +356,7 @@ impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
             index += 12 + 1;
 
             if (capabilities & CLIENT_PLUGIN_AUTH) != 0 {
-                self.auth_plugin_name = read_null_terminated_bytes(buf).borrow()
+                self.auth_plugin_name = read_null_terminated_bytes(&buf[index..]).borrow();
             }
         }
     }
@@ -286,7 +367,7 @@ impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
 }
 
 
-struct OKPacket<'a> {
+pub struct OKPacket<'a> {
     header: HeaderPacket,
     field_count: u8,
     affected_rows: &'a [u8],
@@ -332,11 +413,30 @@ impl<'a, 'b: 'a> Packet<'b> for OKPacket<'a> {
 }
 
 
-struct Reply323Packet<'a> {
+pub struct Reply323Packet<'a> {
     header: HeaderPacket,
     seed: &'a [u8],
 }
 
+impl <'a>Reply323Packet<'a> {
+    pub fn new() -> Self {
+        Self { header: HeaderPacket::new(), seed: &[] }
+    }
+
+    pub fn set_header(&mut self, header: HeaderPacket) {
+        self.header = header;
+    }
+    pub fn set_seed(&mut self, seed: &'a [u8]) {
+        self.seed = seed;
+    }
+
+    pub fn header(&self) -> &HeaderPacket {
+        &self.header
+    }
+    pub fn seed(&self) -> &'a [u8] {
+        self.seed
+    }
+}
 
 impl<'a, 'b: 'a> Packet<'b> for Reply323Packet<'a> {
     fn from_bytes(&mut self, buf: &'b [u8]) {
@@ -356,7 +456,7 @@ impl<'a, 'b: 'a> Packet<'b> for Reply323Packet<'a> {
     }
 }
 
-struct ResultSetHeaderPacket {
+pub struct ResultSetHeaderPacket {
     header: HeaderPacket,
     column_count: i64,
     extra: i64,
@@ -378,7 +478,7 @@ impl<'b> Packet<'b> for ResultSetHeaderPacket {
     }
 }
 
-struct ResultSetPacket<'a> {
+pub struct ResultSetPacket<'a> {
     socket_address: &'a str,
     field_descriptors: Vec<FieldPacket<'a>>,
     field_values: Vec<&'a str>,
@@ -416,7 +516,7 @@ impl<'a> ResultSetPacket<'a> {
 }
 
 
-struct RowDataPacket<'a> {
+pub struct RowDataPacket<'a> {
     header: HeaderPacket,
     columns: Vec<&'a str>,
 }
@@ -428,11 +528,9 @@ impl<'a, 'b: 'a> Packet<'b> for RowDataPacket<'a> {
         loop {
             self.columns.push(reader.read_length_coded_string(buf));
             if reader.index() >= buf.len() {
-                break
+                break;
             }
         }
-
-
     }
 
     fn to_bytes(&mut self) -> Box<[u8]> {
@@ -440,8 +538,7 @@ impl<'a, 'b: 'a> Packet<'b> for RowDataPacket<'a> {
     }
 }
 
-impl <'a>RowDataPacket<'a> {
-
+impl<'a> RowDataPacket<'a> {
     pub fn header(&self) -> &HeaderPacket {
         &self.header
     }
@@ -457,11 +554,11 @@ impl <'a>RowDataPacket<'a> {
         self.columns = columns;
     }
     pub fn new() -> Self {
-        Self { header: HeaderPacket{ packet_body_length: 0, packet_sequence_number: 0 }, columns: vec![] }
+        Self { header: HeaderPacket { packet_body_length: 0, packet_sequence_number: 0 }, columns: vec![] }
     }
 }
 
-struct LengthCodedStringReader<'a> {
+pub struct LengthCodedStringReader<'a> {
     encoding: &'a str,
     index: usize,
 }

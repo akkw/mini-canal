@@ -7,6 +7,15 @@ use capability::{*};
 pub mod msc {
     pub const DEFAULT_PROTOCOL_VERSION: u8 = 0x0a;
     pub const NULL_TERMINATED_STRING_DELIMITER: u8 = 0x00;
+    pub const MAX_PACKET_LENGTH: i32 = (1 << 24);
+    pub const HEADER_PACKET_LENGTH_FIELD_LENGTH: i32 = 3;
+    pub const HEADER_PACKET_LENGTH_FIELD_OFFSET: i32 = 0;
+    pub const HEADER_PACKET_LENGTH: i32 = 4;
+    pub const HEADER_PACKET_NUMBER_FIELD_LENGTH: i32 = 1;
+    pub const FIELD_COUNT_FIELD_LENGTH: i32 = 1;
+    pub const EVENT_TYPE_OFFSET: i32 = 4;
+    pub const EVENT_LEN_OFFSET: i32 = 9;
+    pub const DEFAULT_BINLOG_FILE_START_POSITION: i64 = 4;
 }
 
 pub mod capability {
@@ -199,21 +208,19 @@ pub struct HeaderPacket {
      * this field indicates the packet length that follows the header, with
      * header packet's 4 bytes excluded.
      */
-    packet_body_length: i32,
+    packet_body_length: i64,
     packet_sequence_number: u8,
 }
 
 impl HeaderPacket {
-
-
-    pub fn packet_body_length(&self) -> i32 {
+    pub fn packet_body_length(&self) -> i64 {
         self.packet_body_length
     }
     pub fn packet_sequence_number(&self) -> u8 {
         self.packet_sequence_number
     }
 
-    pub fn set_packet_body_length(&mut self, packet_body_length: i32) {
+    pub fn set_packet_body_length(&mut self, packet_body_length: i64) {
         self.packet_body_length = packet_body_length;
     }
     pub fn set_packet_sequence_number(&mut self, packet_sequence_number: u8) {
@@ -222,15 +229,20 @@ impl HeaderPacket {
     pub fn new() -> Self {
         Self { packet_body_length: 0, packet_sequence_number: 0 }
     }
-    pub fn new_para(packet_body_length: i32,packet_sequence_number: u8 ) -> Self {
+    pub fn new_para(packet_body_length: i64, packet_sequence_number: u8) -> Self {
         Self { packet_body_length, packet_sequence_number }
     }
 }
 
 impl<'a> Packet<'a> for HeaderPacket {
     #[allow(arithmetic_overflow)]
-     fn from_bytes(&mut self, buf: &'a [u8]) {
-        self.packet_body_length = ((buf[0] & 0xFF) as i32 | ((buf[1] & 0xFF) << 8) as i32 | ((buf[2] & 0xFF) << 16) as i32);
+    fn from_bytes(&mut self, buf: &'a [u8]) {
+        let i = buf[0];
+        let i1 = buf[1];
+        let i2 = buf[2];
+        let i3 = buf[3];
+        println!("{} {} {} {}", i, i1, i2, i3);
+        self.packet_body_length = ((i & 0xFF) as i64 | (((buf[1] & 0xFF) as i64) << 8) as i64 | (((buf[2] & 0xFF) as i64) << 16) as i64);
         self.set_packet_sequence_number(buf[3]);
     }
 
@@ -257,23 +269,23 @@ fn read_none_terminated_bytes(buf: &[u8]) -> &[u8] {
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_short_little_endian(buf: &[u8]) -> u16 {
-    ((buf[0] & 0xFF) | ((buf[1] & 0xFF) << 8)) as u16
+    ((buf[0] as u16 & 0xFF) | ((buf[1] as u16 & 0xFF) << 8)) as u16
 }
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_short_little_endian_index(buf: &[u8], index: usize) -> u16 {
-    ((buf[index] & 0xFF) | ((buf[index + 1] & 0xFF) << 8)) as u16
+    ((buf[index] & 0xFF) | (((buf[index + 1] & 0xFF) as u8) << 8)) as u16
 }
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_integer_little_endian(buf: &[u8]) -> u32 {
-    ((buf[0] & 0xFF) as u32 | ((buf[1] & 0xFF) << 8) as u32
-        | ((buf[2] & 0xFF) << 16) as u32 | ((buf[3] & 0xFF) << 24) as u32)
+    ((buf[0] as u8 & 0xFF) as u32 | ((buf[1] as u32 & 0xFF) << 8)
+        | ((buf[2] as u32 & 0xFF) << 16) | ((buf[3] as u32 & 0xFF) << 24))
 }
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_medium_little_endian_index(buf: &[u8], index: usize) -> u32 {
-    ((buf[index] & 0xFF) | ((buf[index + 1] & 0xFF) << 8) | ((buf[index + 2] & 0xFF) << 16)) as u32
+    ((buf[index] as u32 & 0xFF) | ((buf[index + 1] as u32 & 0xFF) << 8) | ((buf[index + 2] as u32 & 0xFF) << 16)) as u32
 }
 
 #[allow(arithmetic_overflow)]
@@ -281,7 +293,7 @@ fn read_unsigned_long_little_endian_index(buf: &[u8], index: usize) -> u64 {
     let mut accumulation = 0;
     let mut shift_by = 0;
     for index in index..index + 8 {
-        accumulation |= ((buf[index] as u64 & 0xff) << shift_by);
+        accumulation |= (((buf[index] & 0xff) as u64) << shift_by);
         shift_by += 8;
     }
     accumulation as u64
@@ -336,12 +348,13 @@ fn read_length_coded_binary(buf: &[u8], mut index: usize) -> i64 {
 }
 
 fn read_null_terminated_bytes(buf: &[u8]) -> &[u8] {
-    let i = 0;
-    for b in buf {
-        let item = *b;
-        if item == NULL_TERMINATED_STRING_DELIMITER {
+    let mut size = 0;
+    for i in 0..buf.len() {
+        if buf[i] == NULL_TERMINATED_STRING_DELIMITER {
             break;
         }
+
+        size += 1;
     }
-    &buf[0..i]
+    &buf[0..size]
 }
