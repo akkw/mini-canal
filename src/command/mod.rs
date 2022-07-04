@@ -187,8 +187,9 @@ pub trait Packet<'a> {
 
 pub mod server;
 
-
 pub mod client;
+
+pub mod log_event;
 
 /**
  * <pre>
