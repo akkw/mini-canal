@@ -132,12 +132,12 @@ impl<'a, 'b: 'a> Packet<'b> for BinlogDumpCommandPacket<'a> {
     fn to_bytes(&mut self) -> Box<[u8]> {
         let mut out = vec![];
         out.push(self.command);
-        write_unsigned_int_little_endian(self.binlog_position, &mut out);
+        write_unsigned_4byte_little_endian(self.binlog_position, &mut out);
         let mut binlog_flags: u8 = 0;
         binlog_flags |= BINLOG_SEND_ANNOTATE_ROWS_EVENT as u8;
         out.push(binlog_flags);
         out.push(0x00);
-        write_unsigned_int_little_endian(self.slave_server_id, &mut out);
+        write_unsigned_4byte_little_endian(self.slave_server_id, &mut out);
         if self.binlog_file_name.len() != 0 {
             let binlog_file_name_bytes = self.binlog_file_name.as_bytes();
             for i in 0..binlog_file_name_bytes.len() {
@@ -162,7 +162,8 @@ pub struct ClientAuthenticationPacket<'a> {
     scrumble_buff: &'a [u8],
     auth_plugin_name: &'a [u8],
 }
-const CLIENT_CAPABILITY:i32 = capability::CLIENT_LONG_PASSWORD | capability::CLIENT_LONG_FLAG
+
+const CLIENT_CAPABILITY: i32 = capability::CLIENT_LONG_PASSWORD | capability::CLIENT_LONG_FLAG
     | capability::CLIENT_PROTOCOL_41 | capability::CLIENT_INTERACTIVE
     | capability::CLIENT_TRANSACTIONS | capability::CLIENT_SECURE_CONNECTION
     | capability::CLIENT_MULTI_STATEMENTS | capability::CLIENT_PLUGIN_AUTH;
@@ -266,8 +267,8 @@ impl<'a, 'b: 'a> Packet<'b> for ClientAuthenticationPacket<'a> {
     fn to_bytes(&mut self) -> Box<[u8]> {
         let mut out = vec![];
         // 1. write client_flags
-        write_unsigned_int_little_endian(self.client_capability as u32, &mut out);
-        write_unsigned_int_little_endian(msc::MAX_PACKET_LENGTH, &mut out);
+        write_unsigned_4byte_little_endian(self.client_capability as u32, &mut out);
+        write_unsigned_4byte_little_endian(msc::MAX_PACKET_LENGTH, &mut out);
         out.push(self.charset_number);
 
         for i in 0..23 {
@@ -295,4 +296,127 @@ impl<'a, 'b: 'a> Packet<'b> for ClientAuthenticationPacket<'a> {
 
         Box::from(out)
     }
+}
+
+const QUERY_COMMAND: u8 = 0x03;
+
+pub struct QueryCommandPacket<'a> {
+    command: u8,
+    sql: &'a str,
+}
+
+
+impl<'a> QueryCommandPacket<'a> {
+    pub fn from(sql: &'a str) -> Self {
+        Self { command: QUERY_COMMAND, sql }
+    }
+}
+
+impl<'a, 'b: 'a> Packet<'b> for QueryCommandPacket<'a> {
+    fn from_bytes(&mut self, buf: &'b [u8]) {}
+
+    fn to_bytes(&mut self) -> Box<[u8]> {
+        let mut out = vec![];
+        out.push(self.command);
+        let bytes = self.sql.as_bytes();
+        for i in 0..bytes.len() {
+            out.push(bytes[i]);
+        }
+        Box::from(out)
+    }
+}
+
+const QUIT_COMMAND: u8 = 0x01;
+
+pub struct QuitCommandPacket {
+    command: u8,
+}
+
+impl QuitCommandPacket {
+    pub fn new() -> Self {
+        Self { command: QUIT_COMMAND }
+    }
+}
+
+impl<'a> Packet<'a> for QuitCommandPacket {
+    fn from_bytes(&mut self, buf: &'a [u8]) {
+        todo!()
+    }
+
+    fn to_bytes(&mut self) -> Box<[u8]> {
+        let mut out = vec![];
+        out.push(self.command);
+        Box::from(out)
+    }
+}
+
+const REGISTER_SLAVE_COMMAND_PACKET: u8 = 0x15;
+
+pub struct RegisterSlaveCommandPacket<'a> {
+    command: u8,
+    report_host: &'a str,
+    report_port: u16,
+    report_user: &'a str,
+    report_passwd: &'a str,
+    server_id: u32,
+}
+
+impl<'a> RegisterSlaveCommandPacket<'a> {
+    pub fn new(report_host: &'a str, report_port: u16, report_user: &'a str, report_passwd: &'a str, server_id: u32) -> Self {
+        Self { command: REGISTER_SLAVE_COMMAND_PACKET, report_host, report_port, report_user, report_passwd, server_id }
+    }
+}
+
+impl<'a, 'b: 'a> Packet<'b> for RegisterSlaveCommandPacket<'a> {
+    fn from_bytes(&mut self, buf: &'b [u8]) {
+        todo!()
+    }
+
+    fn to_bytes(&mut self) -> Box<[u8]> {
+        let mut out = vec![];
+        out.push(self.command);
+        write_unsigned_4byte_little_endian(self.server_id, &mut out);
+        out.push(self.report_host.len() as u8);
+        write_fixed_length_bytes_from_start(self.report_host.as_bytes(), self.report_host.len(), &mut out);
+        out.push(self.report_user.len() as u8);
+        write_fixed_length_bytes_from_start(self.report_user.as_bytes(), self.report_user.len(), &mut out);
+        out.push(self.report_passwd.len() as u8);
+        write_fixed_length_bytes_from_start(self.report_passwd.as_bytes(), self.report_passwd.len(), &mut out);
+        write_unsigned_2byte_little_endian_vec(self.report_port, &mut out);
+        write_unsigned_4byte_little_endian(0, &mut out);// Fake
+        // rpl_recovery_rank
+        write_unsigned_4byte_little_endian(0, &mut out);
+        Box::from(out)
+    }
+}
+
+const SEMI_ACK_COMMAND_PACKET: u8 = 0xef;
+pub struct SemiAckCommandPacket<'a> {
+    command: u8,
+    binlog_position: u64,
+    binlog_file_name: &'a str,
+}
+
+impl<'a> SemiAckCommandPacket<'a> {
+    pub fn new(binlog_position: u64, binlog_file_name: &'a str) -> Self {
+        Self { command: SEMI_ACK_COMMAND_PACKET, binlog_position, binlog_file_name }
+    }
+}
+
+impl < 'a,  'b: 'a >  Packet <'b>for SemiAckCommandPacket<'a> {
+    fn from_bytes(&mut self, buf: &'b [u8]) {
+        todo!()
+    }
+
+    fn to_bytes(&mut self) -> Box<[u8]> {
+        let mut out = vec![];
+        out.push(SEMI_ACK_COMMAND_PACKET);
+        write_unsigned_8byte_little_endian(self.binlog_position, &mut out);
+        if self.binlog_file_name.len() != 0 {
+            write_fixed_length_bytes_from_start(self.binlog_file_name.as_bytes(), self.binlog_file_name.len(),&mut out);
+        }
+        Box::from(out)
+    }
+
+
 }

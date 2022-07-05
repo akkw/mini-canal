@@ -1,4 +1,4 @@
-use std::io::{Read, Write, Result, Error, ErrorKind};
+use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpStream};
 use std::str::FromStr;
 use chrono::Local;
@@ -117,3 +117,4 @@ impl TcpSocketChannel for TcpChannel {
 
 pub mod mysql_socket;
 pub mod read_write_packet;
+pub mod sql_handler;

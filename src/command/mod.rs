@@ -368,13 +368,25 @@ pub fn write_header_and_body(header: &[u8], body: &[u8]) -> Box<[u8]> {
     Box::from(out)
 }
 
-pub fn write_unsigned_int_little_endian(src: u32, out: &mut Vec<u8>) {
+pub fn write_unsigned_8byte_little_endian(src: u64, out: &mut Vec<u8>) {
+    out.push((src & 0xFF) as u8);
+    out.push((src >> 8) as u8);
+    out.push((src >> 16) as u8);
+    out.push((src >> 24) as u8);
+    out.push((src >> 32) as u8);
+    out.push((src >> 40) as u8);
+    out.push((src >> 48) as u8);
+    out.push((src >> 56) as u8);
+}
+
+pub fn write_unsigned_4byte_little_endian(src: u32, out: &mut Vec<u8>) {
     out.push((src & 0xFF) as u8);
     out.push((src >> 8) as u8);
     out.push((src >> 16) as u8);
     out.push((src >> 24) as u8);
 }
-pub fn write_unsigned_short_little_endian_vec(src: u32, out: &mut Vec<u8>) {
+
+pub fn write_unsigned_2byte_little_endian_vec(src: u16, out: &mut Vec<u8>) {
     out.push((src & 0xFF) as u8);
     out.push((src >> 8) as u8);
 }
@@ -384,6 +396,7 @@ pub fn write_unsigned_medium_little_endian(src: u32, out: &mut Vec<u8>) {
     out.push((src >> 8) as u8);
     out.push((src >> 16) as u8);
 }
+
 pub fn write_null_terminated_string(src: &str, out: &mut Vec<u8>) {
     let bytes = src.as_bytes();
     for i in 0..bytes.len() {
@@ -391,6 +404,7 @@ pub fn write_null_terminated_string(src: &str, out: &mut Vec<u8>) {
     }
     out.push(msc::NULL_TERMINATED_STRING_DELIMITER)
 }
+
 pub fn write_null_terminated(src: &[u8], out: &mut Vec<u8>) {
     for i in 0..src.len() {
         out.push(src[i]);
@@ -399,23 +413,30 @@ pub fn write_null_terminated(src: &[u8], out: &mut Vec<u8>) {
 }
 
 
-
 fn write_binary_coded_length_bytes(src: &[u8], out: &mut Vec<u8>) {
     // 1. write length byte/bytes
     if src.len() < 252 {
         out.push(src.len() as u8);
     } else if src.len() < (1 << 16) {
         out.push(252);
-        write_unsigned_short_little_endian_vec(src.len() as u32, out);
+        write_unsigned_2byte_little_endian_vec(src.len() as u16, out);
     } else if src.len() < (1 << 24) {
         out.push(253);
         write_unsigned_medium_little_endian(src.len() as u32, out);
     } else {
         out.push(254);
-        write_unsigned_int_little_endian(src.len() as u32, out);
+        write_unsigned_4byte_little_endian(src.len() as u32, out);
     }
     // 2. write real data followed length byte/bytes
     for i in 0..src.len() {
         out.push(src[i])
+    }
+}
+
+fn write_fixed_length_bytes_from_start(data: &[u8], len: usize, out: &mut Vec<u8>) {}
+
+fn write_fixed_length_bytes(data: &[u8], being: usize, len: usize, out: &mut Vec<u8>) {
+    for i in being..len {
+        out.push(data[i])
     }
 }

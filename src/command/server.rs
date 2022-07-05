@@ -571,7 +571,7 @@ pub struct ResultSetPacket<'a> {
 }
 
 impl<'a> ResultSetPacket<'a> {
-    fn new() -> ResultSetPacket<'a> {
+    pub fn new() -> ResultSetPacket<'a> {
         ResultSetPacket {
             socket_address: "",
             field_descriptors: vec![],

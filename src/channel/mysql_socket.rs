@@ -100,6 +100,7 @@ impl MysqlConnector {
     }
 
 
+
     pub fn connect(&mut self) {
         let result = self.connected.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed);
         if result.is_ok() {
@@ -303,6 +304,9 @@ impl MysqlConnector {
     pub fn set_timeout(&mut self, timeout: u32) {
         self.timeout = timeout;
     }
+    pub fn channel(&mut self) -> &mut Option<Box<dyn TcpSocketChannel>> {
+        &mut self.channel
+    }
 }
 
 
@@ -337,7 +341,7 @@ const connTimeout: u32 = 5 * 1000;
 const soTimeout: u32 = 60 * 60 * 1000;
 const binlogChecksum: u32 = log_event::BINLOG_CHECKSUM_ALG_OFF as u32;
 
-struct MysqlConnection<'a> {
+pub struct MysqlConnection<'a> {
     connector: MysqlConnector,
     slave_id: i64,
     charset: Option<Chars<'a>>,
@@ -347,6 +351,11 @@ struct MysqlConnection<'a> {
     receivedBinlogBytes: AtomicI64,
 }
 
+trait  SqlProcess {
+    fn query(sql: &str) -> ResultSetPacket;
+    fn queryMulti(sql: &str) -> Vec<ResultSetPacket>;
+    fn update(sql: &str) -> i32;
+}
 
 impl<'a> MysqlConnection<'a> {
     pub fn from(address: String, port: u16, username: String, password: String) -> MysqlConnection<'a> {
@@ -395,7 +404,14 @@ impl<'a> MysqlConnection<'a> {
             receivedBinlogBytes: Default::default(),
         }
     }
+
+
+    pub fn connector(&mut self) -> &mut MysqlConnector {
+        &mut self.connector
+    }
 }
+
+
 
 impl<'a> ErosaConnection for MysqlConnection<'a> {
     fn connect(&mut self) {
@@ -435,6 +451,21 @@ impl<'a> ErosaConnection for MysqlConnection<'a> {
     }
 
     fn query_server_id(&self) -> i64 {
+        todo!()
+    }
+}
+
+
+impl <'a>SqlProcess for MysqlConnection<'a> {
+    fn query(sql: &str) -> ResultSetPacket {
+        todo!()
+    }
+
+    fn queryMulti(sql: &str) -> Vec<ResultSetPacket> {
+        todo!()
+    }
+
+    fn update(sql: &str) -> i32 {
         todo!()
     }
 }
