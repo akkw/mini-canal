@@ -493,6 +493,17 @@ pub struct OKPacket<'a> {
     message: &'a str,
 }
 
+impl <'a>OKPacket<'a> {
+    pub fn new() -> Self {
+        Self { header: HeaderPacket::new(), field_count: 0, affected_rows: &[], insert_id: &[], server_status: 0, warning_count: 0, message: "" }
+    }
+
+
+    pub fn affected_rows(&self) -> &'a [u8] {
+        self.affected_rows
+    }
+}
+
 
 impl<'a, 'b: 'a> Packet<'b> for OKPacket<'a> {
     /**
