@@ -24,7 +24,6 @@ impl<'a> AuthSwitchRequestMoreData<'a> {
     }
 
 
-
     pub fn set_status(&mut self, status: i32) {
         self.status = status;
     }
@@ -62,7 +61,7 @@ pub struct AuthSwitchRequestPacket<'a> {
     auth_data: &'a [u8],
 }
 
-impl <'a>AuthSwitchRequestPacket<'a> {
+impl<'a> AuthSwitchRequestPacket<'a> {
     pub fn new() -> Self {
         Self { command: 0, auth_name: "", auth_data: &[] }
     }
@@ -173,6 +172,17 @@ pub struct EOFPacket {
     field_count: u8,
     warning_count: u16,
     status_flag: u16,
+}
+
+impl EOFPacket {
+    pub fn new() -> Self {
+        Self { header: HeaderPacket::new(), field_count: 0, warning_count: 0, status_flag: 0 }
+    }
+
+
+    pub fn status_flag(&self) -> u16 {
+        self.status_flag
+    }
 }
 
 impl<'a> Packet<'a> for EOFPacket {
@@ -287,33 +297,53 @@ impl<'a, 'b: 'a> Packet<'b> for ErrorPacket<'a> {
     }
 }
 
-pub struct FieldPacket<'a> {
+pub struct FieldPacket {
     header: HeaderPacket,
-    catalog: &'a str,
-    db: &'a str,
-    table: &'a str,
-    original_table: &'a str,
-    name: &'a str,
-    original_name: &'a str,
+    catalog: String,
+    db: String,
+    table: String,
+    original_table: String,
+    name: String,
+    original_name: String,
     character: u16,
     length: u32,
     type_: u8,
     flags: u16,
     decimals: u8,
-    definition: &'a str,
+    definition: String,
+}
+
+impl FieldPacket {
+    pub fn new() -> Self {
+        Self {
+            header: HeaderPacket::new(),
+            catalog: String::new(),
+            db: String::new(),
+            table: String::new(),
+            original_table: String::new(),
+            name: String::new(),
+            original_name: String::new(),
+            character: 0,
+            length: 0,
+            type_: 0,
+            flags: 0,
+            decimals: 0,
+            definition: String::new(),
+        }
+    }
 }
 
 
-impl<'a, 'b : 'a> Packet<'b> for FieldPacket<'a> {
-    fn from_bytes(&mut self, buf: &'a [u8]) {
+impl<'b> Packet<'b> for FieldPacket {
+    fn from_bytes(&mut self, buf: &'b [u8]) {
         let mut index = 0;
         let mut reader = LengthCodedStringReader::new(index);
-        self.catalog = reader.read_length_coded_string(&buf);
-        self.db = reader.read_length_coded_string(&buf);
-        self.table = reader.read_length_coded_string(buf);
-        self.original_table = reader.read_length_coded_string(buf);
-        self.name = reader.read_length_coded_string(buf);
-        self.original_name = reader.read_length_coded_string(buf);
+        self.catalog = String::from(reader.read_length_coded_string(&buf));
+        self.db = String::from(reader.read_length_coded_string(&buf));
+        self.table = String::from(reader.read_length_coded_string(buf));
+        self.original_table = String::from(reader.read_length_coded_string(buf));
+        self.name = String::from(reader.read_length_coded_string(buf));
+        self.original_name = String::from(reader.read_length_coded_string(buf));
         index = reader.index() + 1;
         self.character = read_unsigned_short_little_endian(&buf[index..index + 2]);
         index += 2;
@@ -329,7 +359,7 @@ impl<'a, 'b : 'a> Packet<'b> for FieldPacket<'a> {
         index += 2;
         if index < buf.len() {
             reader.set_index(index);
-            self.definition = reader.read_length_coded_string(buf);
+            self.definition = String::from(reader.read_length_coded_string(buf));
         }
     }
 
@@ -408,7 +438,7 @@ impl<'a, 'b: 'a> Packet<'b> for HandshakeInitializationPacket<'a> {
         let server_version_bytes = read_null_terminated_bytes(&buf[index..]);
         self.server_version = from_utf8(server_version_bytes).unwrap();
         index += server_version_bytes.len() + 1;
-        self.thread_id = read_unsigned_integer_little_endian(&buf[index..index+4]);
+        self.thread_id = read_unsigned_integer_little_endian(&buf[index..index + 4]);
         index += 4;
         self.seed = &buf[index..index + 8];
         index += 8;
@@ -504,7 +534,7 @@ pub struct Reply323Packet<'a> {
     seed: &'a [u8],
 }
 
-impl <'a>Reply323Packet<'a> {
+impl<'a> Reply323Packet<'a> {
     pub fn new() -> Self {
         Self { header: HeaderPacket::new(), seed: &[] }
     }
@@ -548,6 +578,16 @@ pub struct ResultSetHeaderPacket {
     extra: i64,
 }
 
+impl ResultSetHeaderPacket {
+    pub fn new() -> Self {
+        Self { header: HeaderPacket::new(), column_count: 0, extra: 0 }
+    }
+
+    pub fn column_count(&self) -> i64 {
+        self.column_count
+    }
+}
+
 impl<'b> Packet<'b> for ResultSetHeaderPacket {
     fn from_bytes(&mut self, buf: &[u8]) {
         let mut index = 0;
@@ -564,55 +604,62 @@ impl<'b> Packet<'b> for ResultSetHeaderPacket {
     }
 }
 
-pub struct ResultSetPacket<'a> {
-    socket_address: &'a str,
-    field_descriptors: Vec<FieldPacket<'a>>,
-    field_values: Vec<&'a str>,
+pub struct ResultSetPacket {
+    socket_address: String,
+    field_descriptors: Vec<FieldPacket>,
+    field_values: Vec<String>,
 }
 
-impl<'a> ResultSetPacket<'a> {
-    pub fn new() -> ResultSetPacket<'a> {
+impl ResultSetPacket {
+    pub fn new() -> ResultSetPacket {
         ResultSetPacket {
-            socket_address: "",
+            socket_address: String::new(),
             field_descriptors: vec![],
             field_values: vec![],
         }
     }
 
 
-    pub fn socket_address(&self) -> &'a str {
-        self.socket_address
+    pub fn socket_address(&self) -> &str {
+        &self.socket_address
     }
-    pub fn field_descriptors(&self) -> &Vec<FieldPacket<'a>> {
+    pub fn field_descriptors(&self) -> &Vec<FieldPacket> {
         &self.field_descriptors
     }
-    pub fn field_values(&self) -> &Vec<&'a str> {
+    pub fn field_descriptors_as_mut(&mut self) -> &mut Vec<FieldPacket> {
+        &mut self.field_descriptors
+    }
+    pub fn field_values(&self) -> &Vec<String> {
         &self.field_values
     }
 
-    pub fn set_socket_address(&mut self, socket_address: &'a str) {
+    pub fn field_values_as_mut(&mut self) -> &mut Vec<String> {
+        &mut self.field_values
+    }
+
+    pub fn set_socket_address(&mut self, socket_address: String) {
         self.socket_address = socket_address;
     }
-    pub fn set_field_descriptors(&mut self, field_descriptors: Vec<FieldPacket<'a>>) {
+    pub fn set_field_descriptors(&mut self, field_descriptors: Vec<FieldPacket>) {
         self.field_descriptors = field_descriptors;
     }
-    pub fn set_field_values(&mut self, field_values: Vec<&'a str>) {
+    pub fn set_field_values(&mut self, field_values: Vec<String>) {
         self.field_values = field_values;
     }
 }
 
 
-pub struct RowDataPacket<'a> {
+pub struct RowDataPacket {
     header: HeaderPacket,
-    columns: Vec<&'a str>,
+    columns: Vec<String>,
 }
 
-impl<'a, 'b: 'a> Packet<'b> for RowDataPacket<'a> {
+impl<'b> Packet<'b> for RowDataPacket {
     fn from_bytes(&mut self, buf: &'b [u8]) {
         let index = 0;
         let mut reader = LengthCodedStringReader::new(index);
         loop {
-            self.columns.push(reader.read_length_coded_string(buf));
+            self.columns.push(String::from(reader.read_length_coded_string(buf)));
             if reader.index() >= buf.len() {
                 break;
             }
@@ -624,19 +671,19 @@ impl<'a, 'b: 'a> Packet<'b> for RowDataPacket<'a> {
     }
 }
 
-impl<'a> RowDataPacket<'a> {
+impl RowDataPacket {
     pub fn header(&self) -> &HeaderPacket {
         &self.header
     }
-    pub fn columns(&self) -> &Vec<&'a str> {
-        &self.columns
+    pub fn columns(self) -> Vec<String> {
+        self.columns
     }
 
 
     pub fn set_header(&mut self, header: HeaderPacket) {
         self.header = header;
     }
-    pub fn set_columns(&mut self, columns: Vec<&'a str>) {
+    pub fn set_columns(&mut self, columns: Vec<String>) {
         self.columns = columns;
     }
     pub fn new() -> Self {

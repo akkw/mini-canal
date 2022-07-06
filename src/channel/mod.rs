@@ -117,4 +117,4 @@ impl TcpSocketChannel for TcpChannel {
 
 pub mod mysql_socket;
 pub mod read_write_packet;
-pub mod sql_handler;
+pub mod sql_utils;
