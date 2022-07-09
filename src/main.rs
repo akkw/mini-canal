@@ -1,6 +1,14 @@
-use mysql_binlog_parse::channel::mysql_socket::MysqlConnector;
+// use mysql_binlog_parse::instance::running::MysqlEventParser;
+// use mysql_binlog_parse::parse::support::AuthenticationInfo;
 
 fn main() {
-    // let mut connector = MysqlConnector::new_user_password("127.0.0.1", 3306, "root", "root");
-    // connector.connect();
+    // let info = AuthenticationInfo::form(String::from("127.0.0.1"),
+    //                                     3306,
+    //                                     String::from("root"),
+    //                                     String::from("root"),
+    //                                     String::from("test"));
+    // let mut parser = MysqlEventParser::from(info);
+    // parser.start();
+    let i: u8 = 128;
+    println!("{}", i as i8);
 }

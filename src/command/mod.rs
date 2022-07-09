@@ -307,19 +307,19 @@ fn read_binary_coded_length_bytes(buf: &[u8], mut index: usize) -> &[u8] {
     let mark = buf[index] & 0xFF;
     return match mark {
         251 => {
-            &buf[index..index]
+            &buf[index..index + 1]
         }
         252 => {
-            &buf[index..index + 2]
-        }
-        253 => {
             &buf[index..index + 3]
         }
+        253 => {
+            &buf[index..index + 4]
+        }
         254 => {
-            &buf[index..index + 8]
+            &buf[index..index + 9]
         }
         _ => {
-            &[]
+            &buf[index..index + 1]
         }
     };
 }
@@ -433,7 +433,9 @@ fn write_binary_coded_length_bytes(src: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-fn write_fixed_length_bytes_from_start(data: &[u8], len: usize, out: &mut Vec<u8>) {}
+fn write_fixed_length_bytes_from_start(data: &[u8], len: usize, out: &mut Vec<u8>) {
+    todo!()
+}
 
 fn write_fixed_length_bytes(data: &[u8], being: usize, len: usize, out: &mut Vec<u8>) {
     for i in being..len {

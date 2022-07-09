@@ -566,7 +566,7 @@ impl<'a> Reply323Packet<'a> {
 }
 
 impl<'a, 'b: 'a> Packet<'b> for Reply323Packet<'a> {
-    fn from_bytes(&mut self, buf: &'b [u8]) {
+    fn from_bytes(&mut self, _buf: &'b [u8]) {
         todo!()
     }
 
@@ -723,7 +723,10 @@ impl<'a> LengthCodedStringReader<'a> {
         if length == NULL_LENGTH as i64 {
             return "";
         }
-        from_utf8(&buf[self.index..(self.index + length as usize)]).unwrap()
+        let str = from_utf8(&buf[self.index..(self.index + length as usize)]).unwrap();
+        self.set_index(self.index + length as usize);
+        str
+
     }
 
     pub fn index(&self) -> usize {

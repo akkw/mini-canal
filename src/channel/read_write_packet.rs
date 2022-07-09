@@ -13,7 +13,7 @@ pub fn read_header(ch: &mut Box<dyn TcpSocketChannel>) -> Option<HeaderPacket> {
 pub fn read_header_timeout(ch: &mut Box<dyn TcpSocketChannel>, timeout: u32) -> Option<HeaderPacket> {
     let mut packet = HeaderPacket::new();
     let mut buf = [0 as u8; 4];
-    ch.read_with_timeout(&mut buf, timeout).map_or(Option::None, |f| {
+    ch.read_with_timeout(&mut buf, timeout).map_or(Option::None, |_f| {
         packet.from_bytes(&buf);
         Option::Some(packet)
     })
@@ -24,7 +24,7 @@ pub fn read_bytes(ch:& mut  Box<dyn TcpSocketChannel>, len: i64) ->  Box<[u8]> {
 }
 
 pub fn write_pkg(ch: &mut Box<dyn TcpSocketChannel>, srcs: &[u8]) {
-    ch.write(srcs);
+    ch.write(srcs).unwrap();
 }
 
 pub fn write_body(ch: &mut Box<dyn TcpSocketChannel>, body: &[u8]) {
@@ -32,8 +32,10 @@ pub fn write_body(ch: &mut Box<dyn TcpSocketChannel>, body: &[u8]) {
 }
 
 pub fn write_body0(ch: &mut Box<dyn TcpSocketChannel>, srcs: &[u8], packet_seq_number: u8) {
-    HeaderPacket::new_para(srcs.len() as i64, packet_seq_number);
-    ch.write(srcs);
+    let mut packet = HeaderPacket::new_para(srcs.len() as i64, packet_seq_number);
+    let body = packet.to_bytes();
+    ch.write(&body).unwrap();
+    ch.write(srcs).unwrap();
 }
 
 

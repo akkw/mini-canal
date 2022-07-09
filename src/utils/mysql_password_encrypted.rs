@@ -60,7 +60,7 @@ pub fn scramble411 (password: &[u8], seed: &[u8]) -> Box<[u8]>{
 }
 
 
-pub fn scrambleCachingSha2 (password: &[u8], seed: &[u8]) -> Box<[u8]>{
+pub fn scramble_caching_sha2(password: &[u8], seed: &[u8]) -> Box<[u8]>{
     let mut sha1 = sha1_smol::Sha1::new();
     sha1.update(password);
     let pass1 = sha1.digest().bytes();

@@ -1,12 +1,13 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::str::{Chars, from_utf8};
+use std::str::{from_utf8};
 use crate::channel::{TcpChannel, TcpSocketChannel};
 use crate::channel::read_write_packet::{*};
+use crate::channel::sql_utils::{MysqlQueryExecutor, MysqlUpdateExecutor};
 use crate::command::{log_event, msc, Packet, write_header_and_body};
 use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
-use crate::parse::inbound::{MultiStageCoprocessor, SinkFunction};
+use crate::command::log_event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, MARIA_SLAVE_CAPABILITY_MINE};
 use crate::parse::support::AuthenticationInfo;
 
 
@@ -100,7 +101,6 @@ impl MysqlConnector {
     }
 
 
-
     pub fn connect(&mut self) {
         let result = self.connected.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed);
         if result.is_ok() {
@@ -108,10 +108,38 @@ impl MysqlConnector {
                 TcpChannel::new(&self.address, self.port)
             }).unwrap()));
 
-            self.negotiate();
+            self.negotiate().unwrap();
         } else if result.is_err() {
             println!("the connection is already established")
         }
+    }
+
+    pub fn disconnect(&mut self) {
+        let result = self.connected.compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed);
+        if result.is_ok() {
+            if let Some(channel) = self.channel() {
+                channel.as_ref().close().unwrap();
+            }
+
+
+            if self.dumping && self.connection_id > 0 {
+                let mut connector = self.fork();
+                connector.connect();
+                let id = self.connection_id;
+                let mut executor = MysqlUpdateExecutor::new(self);
+                executor.update(&format!("KILL CONNECTION {}", id)).unwrap();
+
+                self.dumping = false;
+            }
+        }
+    }
+
+    pub fn reconnect(&mut self) {
+        self.disconnect();
+        self.connect();
+    }
+    fn fork(&self) -> MysqlConnector {
+        MysqlConnector::new_schema(self.address.clone(), self.port, self.username.clone(), self.password.as_ref().unwrap().clone(), 33, self.default_schema.clone())
     }
 
     fn negotiate(&mut self) -> Result<bool, String> {
@@ -119,7 +147,7 @@ impl MysqlConnector {
         let body = read_bytes(self.channel.as_mut().unwrap(), header.packet_body_length());
 
 
-        if body[0] < 0 {
+        if body[0] > 127 {
             return if body[0] == 255 {
                 let mut error = ErrorPacket::new();
                 error.from_bytes(&body);
@@ -192,7 +220,7 @@ impl MysqlConnector {
                 encrypted_password = scramble411(self.password.as_ref().unwrap().as_bytes(), auth_data);
             } else if plugin_name.len() != 0 && "caching_sha2_password".eq(plugin_name) {
                 is_sha2_password = true;
-                encrypted_password = scrambleCachingSha2(self.password.as_ref().unwrap().as_bytes(), auth_data);
+                encrypted_password = scramble_caching_sha2(self.password.as_ref().unwrap().as_bytes(), auth_data);
             } else {
                 encrypted_password = Box::from([]);
             }
@@ -232,13 +260,13 @@ impl MysqlConnector {
         Result::Ok(true)
     }
 
-    fn join_and_create_scrumble_buff(&self, handshakePacket: &HandshakeInitializationPacket) -> Box<[u8]> {
+    fn join_and_create_scrumble_buff(&self, handshake_packet: &HandshakeInitializationPacket) -> Box<[u8]> {
         let mut out = vec![];
-        for i in 0..handshakePacket.seed().len() {
-            out.push(handshakePacket.seed()[i])
+        for i in 0..handshake_packet.seed().len() {
+            out.push(handshake_packet.seed()[i])
         }
-        for i in 0..handshakePacket.rest_of_scramble_buff().len() {
-            out.push(handshakePacket.rest_of_scramble_buff()[i])
+        for i in 0..handshake_packet.rest_of_scramble_buff().len() {
+            out.push(handshake_packet.rest_of_scramble_buff()[i])
         }
         Box::from(out)
     }
@@ -304,24 +332,15 @@ impl MysqlConnector {
     pub fn set_timeout(&mut self, timeout: u32) {
         self.timeout = timeout;
     }
-    pub fn channel(&mut self) -> &mut Option<Box<dyn TcpSocketChannel>> {
+    pub fn channel_as_mut(&mut self) -> &mut Option<Box<dyn TcpSocketChannel>> {
         &mut self.channel
+    }
+
+    pub fn channel(&self) -> &Option<Box<dyn TcpSocketChannel>> {
+        &self.channel
     }
 }
 
-
-trait ErosaConnection {
-    fn connect(&mut self);
-    fn reconnect(&mut self);
-    fn disconnect(&mut self);
-    fn seek<E>(&mut self, binlog_filename: &str, binlog_position: i64, gtid: &str, sink_function: Box<dyn SinkFunction<E>>);
-    fn at_dump_sink<E>(&mut self, binlog_filename: &str, binlog_position: i64, sink_function: Box<dyn SinkFunction<E>>);
-    fn at_dump_timestamp<E>(&mut self, timestamp: i64, sink_function: Box<dyn SinkFunction<E>>);
-    fn at_dump_file_coprocessor(&mut self, binlog_filename: &str, binlog_position: i64, coprocessor: Box<dyn MultiStageCoprocessor>);
-    fn at_dump_timestamp_coprocessor(&mut self, timestamp: i64, coprocessor: Box<dyn MultiStageCoprocessor>);
-    fn fork(&self) -> Self;
-    fn query_server_id(&self) -> i64;
-}
 
 enum BinlogFormat {
     STATEMENT,
@@ -337,58 +356,57 @@ enum BinlogImage {
     None,
 }
 
-const connTimeout: u32 = 5 * 1000;
-const soTimeout: u32 = 60 * 60 * 1000;
-const binlogChecksum: u32 = log_event::BINLOG_CHECKSUM_ALG_OFF as u32;
+const BINLOG_CHECKSUM: u32 = log_event::BINLOG_CHECKSUM_ALG_OFF as u32;
 
-pub struct MysqlConnection<'a> {
+pub struct MysqlConnection {
     connector: MysqlConnector,
-    slave_id: i64,
-    charset: Option<Chars<'a>>,
+    slave_id: u32,
     binlog_format: BinlogFormat,
     binlog_image: BinlogImage,
-    authInfo: AuthenticationInfo,
-    receivedBinlogBytes: AtomicI64,
+    auth_info: AuthenticationInfo,
+    received_binlog_bytes: AtomicI64,
+    binlog_checksum: u8,
 }
 
-trait  SqlProcess {
-    fn query(sql: &str) -> ResultSetPacket;
-    fn queryMulti(sql: &str) -> Vec<ResultSetPacket>;
-    fn update(sql: &str) -> i32;
+
+trait SqlProcess {
+    fn query(&mut self, sql: &str) -> ResultSetPacket;
+    fn query_multi(&mut self, sql: &str) -> Vec<ResultSetPacket>;
+    fn update(&mut self, sql: &str) -> u32;
 }
 
-impl<'a> MysqlConnection<'a> {
-    pub fn from(address: String, port: u16, username: String, password: String) -> MysqlConnection<'a> {
+impl MysqlConnection {
+    pub fn from(address: String, port: u16, username: String, password: String) -> MysqlConnection {
         let mut connection = MysqlConnection::new();
-        connection.init(address,port, username, password)
+        connection.init(address, port, username, password)
     }
 
-    pub fn from_schema(address: String, port: u16, username: String, password: String, default_schema: String) -> MysqlConnection<'a> {
-        let mut connection = MysqlConnection::new();
-        connection.init_schema(address,port, username, password, default_schema)
+    pub fn from_schema(address: String, port: u16, username: String, password: String, default_schema: String) -> MysqlConnection {
+        let connection = MysqlConnection::new();
+        connection.init_schema(address, port, username, password, default_schema)
     }
-    fn init(mut self, address: String, port: u16, username: String, password: String) -> MysqlConnection<'a> {
+    fn init(mut self, address: String, port: u16, username: String, password: String) -> MysqlConnection {
         self.connector.set_address(address.clone());
         self.connector.set_port(port);
         self.connector.set_password(password.clone());
         self.connector.set_username(username.clone());
-        self.authInfo.set_password(password);
-        self.authInfo.set_username(username);
-        self.authInfo.set_port(port);
-        self.authInfo.set_address(address);
+        self.auth_info.set_password(password);
+        self.auth_info.set_username(username);
+        self.auth_info.set_port(port);
+        self.auth_info.set_address(address);
         self
     }
-    fn init_schema(mut self, address: String, port: u16, username: String, password: String, schema: String) -> MysqlConnection<'a> {
+    fn init_schema(mut self, address: String, port: u16, username: String, password: String, schema: String) -> MysqlConnection {
         self.connector.set_address(address.clone());
         self.connector.set_port(port);
         self.connector.set_password(password.clone());
         self.connector.set_username(username.clone());
         self.connector.set_default_schema(schema.clone());
-        self.authInfo.set_password(password);
-        self.authInfo.set_default_database_name(schema);
-        self.authInfo.set_username(username);
-        self.authInfo.set_port(port);
-        self.authInfo.set_address(address);
+        self.auth_info.set_password(password);
+        self.auth_info.set_default_database_name(schema);
+        self.auth_info.set_username(username);
+        self.auth_info.set_port(port);
+        self.auth_info.set_address(address);
         self
     }
 
@@ -397,11 +415,11 @@ impl<'a> MysqlConnection<'a> {
         Self {
             connector: MysqlConnector::new(),
             slave_id: 0,
-            charset: Option::None,
             binlog_format: BinlogFormat::None,
             binlog_image: BinlogImage::None,
-            authInfo: AuthenticationInfo::new(),
-            receivedBinlogBytes: Default::default(),
+            auth_info: AuthenticationInfo::new(),
+            received_binlog_bytes: Default::default(),
+            binlog_checksum: BINLOG_CHECKSUM_ALG_OFF,
         }
     }
 
@@ -409,64 +427,133 @@ impl<'a> MysqlConnection<'a> {
     pub fn connector(&mut self) -> &mut MysqlConnector {
         &mut self.connector
     }
-}
 
-
-
-impl<'a> ErosaConnection for MysqlConnection<'a> {
-    fn connect(&mut self) {
+    pub fn connect(&mut self) {
         self.connector.connect();
     }
 
-    fn reconnect(&mut self) {
-        todo!()
+    pub fn reconnect(&mut self) {
+        self.connector.reconnect()
     }
 
-    fn disconnect(&mut self) {
-        todo!()
+    pub fn disconnect(&mut self) {
+        self.connector.disconnect()
     }
 
-    fn seek<E>(&mut self, binlog_filename: &str, binlog_position: i64, gtid: &str, sink_function: Box<dyn SinkFunction<E>>) {
-        todo!()
+    pub fn at_dump_sink(&mut self, binlog_filename: &str, binlog_position: u32) {
+        self.update_settings();
+        self.load_binlog_checksum();
+        self.send_register_slave();
+
+        self.send_binlog_dump(binlog_filename, binlog_position)
     }
 
-    fn at_dump_sink<E>(&mut self, binlog_filename: &str, binlog_position: i64, sink_function: Box<dyn SinkFunction<E>>) {
-        todo!()
+    fn update_settings(&mut self) {
+        self.update("set wait_timeout=9999999");
+        self.update("set net_write_timeout=7200");
+        self.update("set net_read_timeout=7200");
+        self.update("set names 'binary'");
+        self.update("set @master_binlog_checksum= @@global.binlog_checksum");
+        self.update("set @slave_uuid=uuid()");
+        self.update(format!("SET @mariadb_slave_capability= '{}'", MARIA_SLAVE_CAPABILITY_MINE).as_str());
     }
 
-    fn at_dump_timestamp<E>(&mut self, timestamp: i64, sink_function: Box<dyn SinkFunction<E>>) {
-        todo!()
+
+    fn load_binlog_checksum(&mut self) {
+        let packet = self.query("select @@global.binlog_checksum");
+        let col_values = packet.field_values();
+        if col_values.len() >= 1 && col_values.get(0).unwrap().len() != 0
+            && col_values.get(0).unwrap().to_ascii_uppercase().eq("CRC32") {
+            self.binlog_checksum = BINLOG_CHECKSUM_ALG_CRC32
+        } else {
+            self.binlog_checksum = BINLOG_CHECKSUM_ALG_OFF
+        }
     }
 
-    fn at_dump_file_coprocessor(&mut self, binlog_filename: &str, binlog_position: i64, coprocessor: Box<dyn MultiStageCoprocessor>) {
-        todo!()
+    fn send_register_slave(&mut self) {
+        let v4 = self.connector.channel.as_mut().unwrap().get_local_address().unwrap();
+        let host = v4.ip().to_string();
+        let port = v4.port();
+        let mut packet = RegisterSlaveCommandPacket::from(host.as_str(), port, self.auth_info.username(), self.auth_info.password(), self.slave_id);
+        let body = packet.to_bytes();
+        println!("Register slave");
+        write_body(self.connector.channel.as_mut().unwrap(), &body);
+
+        let header = read_header(self.connector.channel.as_mut().unwrap()).unwrap();
+        let bytes = read_bytes(self.connector.channel.as_mut().unwrap(), header.packet_body_length());
+        if bytes[0] > 127 {
+            if bytes[0] == 255 {
+                let mut error = ErrorPacket::new();
+                error.from_bytes(&body);
+                println!("{}", format!("Error When doing Register slave: {}", error))
+            } else {
+                println!("{}", format!("Unexpected packet"))
+            }
+        }
+    }
+    fn send_binlog_dump(&mut self, binlog_filename: &str, binlog_position: u32) {
+        let mut packet = BinlogDumpCommandPacket::from(binlog_filename, binlog_position, self.slave_id);
+        let body = packet.to_bytes();
+
+        println!("COM_BINLOG_DUMP with position:{}", packet);
+        write_body(self.connector.channel.as_mut().unwrap(), &body)
     }
 
-    fn at_dump_timestamp_coprocessor(&mut self, timestamp: i64, coprocessor: Box<dyn MultiStageCoprocessor>) {
-        todo!()
+    pub fn fork(&self) -> Self {
+        let mut connection = MysqlConnection::new();
+        connection.set_slave_id(self.slave_id);
+        connection.set_connector(self.connector.fork());
+        connection.set_auth_info(self.auth_info.clone());
+
+        connection
     }
 
-    fn fork(&self) -> Self {
-        todo!()
+    pub fn query_server_id(&mut self) -> i64 {
+        let packet = self.query("show variables like 'server_id'");
+        let values = packet.field_values();
+        if values.len() != 2 {
+            return 0;
+        }
+        let x = values.get(1).unwrap();
+        let server_id = x.parse::<i64>().unwrap();
+        server_id
     }
 
-    fn query_server_id(&self) -> i64 {
-        todo!()
+
+    pub fn set_slave_id(&mut self, slave_id: u32) {
+        self.slave_id = slave_id;
+    }
+    pub fn set_connector(&mut self, connector: MysqlConnector) {
+        self.connector = connector;
+    }
+    pub fn set_auth_info(&mut self, auth_info: AuthenticationInfo) {
+        self.auth_info = auth_info;
+    }
+
+
+    pub fn query(&mut self, sql: &str) -> ResultSetPacket {
+        let mut query_packet = MysqlQueryExecutor::from(&mut self.connector);
+        let result = query_packet.query(sql);
+        let packet = result.unwrap();
+        packet
     }
 }
 
 
-impl <'a>SqlProcess for MysqlConnection<'a> {
-    fn query(sql: &str) -> ResultSetPacket {
-        todo!()
+impl SqlProcess for MysqlConnection {
+    fn query(&mut self, sql: &str) -> ResultSetPacket {
+        let mut executor = MysqlQueryExecutor::from(self.connector());
+        executor.query(sql).unwrap()
     }
 
-    fn queryMulti(sql: &str) -> Vec<ResultSetPacket> {
-        todo!()
+    fn query_multi(&mut self, sql: &str) -> Vec<ResultSetPacket> {
+        let mut executor = MysqlQueryExecutor::from(self.connector());
+        executor.query_multi(sql).unwrap()
     }
 
-    fn update(sql: &str) -> i32 {
-        todo!()
+    fn update(&mut self, sql: &str) -> u32 {
+        let mut executor = MysqlUpdateExecutor::new(self.connector());
+        executor.update(sql).unwrap()
     }
 }
 

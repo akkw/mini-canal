@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use crate::command::{*};
 use crate::utils::mysql_password_encrypted::scramble411;
 
@@ -29,7 +30,7 @@ impl<'a> AuthSwitchResponsePacket<'a> {
 
 
 impl<'a, 'b : 'a> Packet<'b> for AuthSwitchResponsePacket<'a> {
-    fn from_bytes(&mut self, buf: &'b [u8]) {
+    fn from_bytes(&mut self, _buf: &'b [u8]) {
         todo!()
     }
 
@@ -71,61 +72,21 @@ pub struct BinlogDumpCommandPacket<'a> {
  * </pre>
  */
 impl<'a> BinlogDumpCommandPacket<'a> {
-    pub fn _new() -> Self {
+    pub fn from(binlog_file_name: &'a str, binlog_position: u32, slave_server_id: u32) -> Self {
         Self {
-            command: 0,
+            command: 0x12,
             binlog_dump_non_block: BINLOG_DUMP_NON_BLOCK,
             binlog_send_annotate_rows_event: BINLOG_SEND_ANNOTATE_ROWS_EVENT,
-            binlog_position: 0,
-            slave_server_id: 0,
-            binlog_file_name: "",
+            binlog_position,
+            slave_server_id,
+            binlog_file_name,
         }
-    }
-
-
-    pub fn _command(&self) -> u8 {
-        self.command
-    }
-    pub fn _binlog_dump_non_block(&self) -> u32 {
-        self.binlog_dump_non_block
-    }
-    pub fn _binlog_send_annotate_rows_event(&self) -> u32 {
-        self.binlog_send_annotate_rows_event
-    }
-    pub fn _binlog_position(&self) -> u32 {
-        self.binlog_position
-    }
-    pub fn _slave_server_id(&self) -> u32 {
-        self.slave_server_id
-    }
-    pub fn _binlog_file_name(&self) -> &'a str {
-        self.binlog_file_name
-    }
-
-
-    pub fn _set_command(&mut self, command: u8) {
-        self.command = command;
-    }
-    pub fn _set_binlog_dump_non_block(&mut self, binlog_dump_non_block: u32) {
-        self.binlog_dump_non_block = binlog_dump_non_block;
-    }
-    pub fn _set_binlog_send_annotate_rows_event(&mut self, binlog_send_annotate_rows_event: u32) {
-        self.binlog_send_annotate_rows_event = binlog_send_annotate_rows_event;
-    }
-    pub fn _set_binlog_position(&mut self, binlog_position: u32) {
-        self.binlog_position = binlog_position;
-    }
-    pub fn _set_slave_server_id(&mut self, slave_server_id: u32) {
-        self.slave_server_id = slave_server_id;
-    }
-    pub fn _set_binlog_file_name(&mut self, binlog_file_name: &'a str) {
-        self.binlog_file_name = binlog_file_name;
     }
 }
 
 
 impl<'a, 'b: 'a> Packet<'b> for BinlogDumpCommandPacket<'a> {
-    fn from_bytes(&mut self, buf: &'b [u8]) {
+    fn from_bytes(&mut self, _buf: &'b [u8]) {
         todo!()
     }
 
@@ -147,6 +108,13 @@ impl<'a, 'b: 'a> Packet<'b> for BinlogDumpCommandPacket<'a> {
         Box::from(out)
     }
 }
+
+impl <'a>Display for BinlogDumpCommandPacket<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "binlog_file_name: {}, binlog_position:{}, slave_server_id:{}", self.binlog_file_name, self.binlog_position, self.slave_server_id)
+    }
+}
+
 
 struct BinlogDumpGTIDCommandPacket {}
 
@@ -245,7 +213,7 @@ impl<'a> ClientAuthenticationPacket<'a> {
 }
 
 impl<'a, 'b: 'a> Packet<'b> for ClientAuthenticationPacket<'a> {
-    fn from_bytes(&mut self, buf: &'a [u8]) {
+    fn from_bytes(&mut self, _buf: &'a [u8]) {
         todo!()
     }
     /**
@@ -271,7 +239,7 @@ impl<'a, 'b: 'a> Packet<'b> for ClientAuthenticationPacket<'a> {
         write_unsigned_4byte_little_endian(msc::MAX_PACKET_LENGTH, &mut out);
         out.push(self.charset_number);
 
-        for i in 0..23 {
+        for _i in 0..23 {
             out.push(0);
         }
 
@@ -313,7 +281,7 @@ impl<'a> QueryCommandPacket<'a> {
 }
 
 impl<'a, 'b: 'a> Packet<'b> for QueryCommandPacket<'a> {
-    fn from_bytes(&mut self, buf: &'b [u8]) {}
+    fn from_bytes(&mut self, _buf: &'b [u8]) {}
 
     fn to_bytes(&mut self) -> Box<[u8]> {
         let mut out = vec![];
@@ -339,7 +307,7 @@ impl QuitCommandPacket {
 }
 
 impl<'a> Packet<'a> for QuitCommandPacket {
-    fn from_bytes(&mut self, buf: &'a [u8]) {
+    fn from_bytes(&mut self, _buf: &'a [u8]) {
         todo!()
     }
 
@@ -362,13 +330,13 @@ pub struct RegisterSlaveCommandPacket<'a> {
 }
 
 impl<'a> RegisterSlaveCommandPacket<'a> {
-    pub fn new(report_host: &'a str, report_port: u16, report_user: &'a str, report_passwd: &'a str, server_id: u32) -> Self {
+    pub fn from(report_host: &'a str, report_port: u16, report_user: &'a str, report_passwd: &'a str, server_id: u32) -> Self {
         Self { command: REGISTER_SLAVE_COMMAND_PACKET, report_host, report_port, report_user, report_passwd, server_id }
     }
 }
 
 impl<'a, 'b: 'a> Packet<'b> for RegisterSlaveCommandPacket<'a> {
-    fn from_bytes(&mut self, buf: &'b [u8]) {
+    fn from_bytes(&mut self, _buf: &'b [u8]) {
         todo!()
     }
 
@@ -391,6 +359,7 @@ impl<'a, 'b: 'a> Packet<'b> for RegisterSlaveCommandPacket<'a> {
 }
 
 const SEMI_ACK_COMMAND_PACKET: u8 = 0xef;
+
 pub struct SemiAckCommandPacket<'a> {
     command: u8,
     binlog_position: u64,
@@ -403,7 +372,7 @@ impl<'a> SemiAckCommandPacket<'a> {
     }
 }
 
-impl < 'a,  'b: 'a >  Packet <'b>for SemiAckCommandPacket<'a> {
+impl<'a, 'b: 'a> Packet<'b> for SemiAckCommandPacket<'a> {
     fn from_bytes(&mut self, buf: &'b [u8]) {
         todo!()
     }
@@ -413,10 +382,8 @@ impl < 'a,  'b: 'a >  Packet <'b>for SemiAckCommandPacket<'a> {
         out.push(SEMI_ACK_COMMAND_PACKET);
         write_unsigned_8byte_little_endian(self.binlog_position, &mut out);
         if self.binlog_file_name.len() != 0 {
-            write_fixed_length_bytes_from_start(self.binlog_file_name.as_bytes(), self.binlog_file_name.len(),&mut out);
+            write_fixed_length_bytes_from_start(self.binlog_file_name.as_bytes(), self.binlog_file_name.len(), &mut out);
         }
         Box::from(out)
     }
-
-
 }

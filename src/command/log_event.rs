@@ -18,10 +18,12 @@
      * UNIQUE_CHECKS, SQL_AUTO_IS_NULL, the collations and charsets, the
      * PASSWORD() version (old/new/...).
      */
+use crate::instance::log_buffer::LogBuffer;
+
 pub const BINLOG_VERSION: u8 = 4;
 
 /* Default 5.0 server version */
-pub const SERVER_VERSION: &str                           =  "5.0";
+pub const SERVER_VERSION: &str = "5.0";
 
 /**
  * Event header offsets; these point to places inside the fixed header.
@@ -34,9 +36,9 @@ pub const FLAGS_OFFSET: u8 = 17;
 
 /* event-specific post-header sizes */
 // where 3.23, 4.x and 5.0 agree
-pub const QUERY_HEADER_MINIMAL_LEN: u8 = (4 + 4 + 1 + 2);
+pub const QUERY_HEADER_MINIMAL_LEN: u8 = 4 + 4 + 1 + 2;
 // where 5.0 differs: 2 for len of N-bytes vars.
-pub const QUERY_HEADER_LEN: u8 = (QUERY_HEADER_MINIMAL_LEN + 2);
+pub const QUERY_HEADER_LEN: u8 = QUERY_HEADER_MINIMAL_LEN + 2;
 
 /* Enumeration type for the different types of log events. */
 pub const UNKNOWN_EVENT: u8 = 0;
@@ -94,7 +96,7 @@ pub const HEARTBEAT_LOG_EVENT: u8 = 27;
 
 /**
  * In some situations, it is necessary to send over ignorable data to the
- * slave: data that a slave can handle in case there is code for handling
+ * slave: data that a slave can handle in  there is code for handling
  * it, but which can be ignored if it is not recognized.
  */
 pub const IGNORABLE_LOG_EVENT: u8 = 28;
@@ -168,7 +170,7 @@ pub const ENUM_END_EVENT: u8 = 165;
 pub const EXTRA_ROW_INFO_LEN_OFFSET: u8 = 0;
 pub const EXTRA_ROW_INFO_FORMAT_OFFSET: u8 = 1;
 pub const EXTRA_ROW_INFO_HDR_BYTES: u8 = 2;
-pub const EXTRA_ROW_INFO_MAX_PAYLOAD: u8 = (255 - EXTRA_ROW_INFO_HDR_BYTES);
+pub const EXTRA_ROW_INFO_MAX_PAYLOAD: u8 = 255 - EXTRA_ROW_INFO_HDR_BYTES;
 
 // Events are without checksum though its generator
 pub const BINLOG_CHECKSUM_ALG_OFF: u8 = 0;
@@ -250,3 +252,96 @@ pub const MYSQL_TYPE_BLOB: u8 = 252;
 pub const MYSQL_TYPE_VAR_STRING: u8 = 253;
 pub const MYSQL_TYPE_STRING: u8 = 254;
 pub const MYSQL_TYPE_GEOMETRY: u8 = 255;
+
+
+struct LogEvent {}
+
+impl LogEvent {
+    fn get_type_name(t: u8) -> String {
+        match t {
+            START_EVENT_V3 => String::from("Start_v3"),
+            STOP_EVENT => String::from("Stop"),
+            QUERY_EVENT => String::from("Query"),
+            ROTATE_EVENT => String::from("Rotate"),
+            INTVAR_EVENT => String::from("Intvar"),
+            LOAD_EVENT => String::from("Load"),
+            NEW_LOAD_EVENT => String::from("New_load"),
+            SLAVE_EVENT => String::from("Slave"),
+            CREATE_FILE_EVENT => String::from("Create_file"),
+            APPEND_BLOCK_EVENT => String::from("Append_block"),
+            DELETE_FILE_EVENT => String::from("Delete_file"),
+            EXEC_LOAD_EVENT => String::from("Exec_load"),
+            RAND_EVENT => String::from("RAND"),
+            XID_EVENT => String::from("Xid"),
+            USER_VAR_EVENT => String::from("User var"),
+            FORMAT_DESCRIPTION_EVENT => String::from("Format_desc"),
+            TABLE_MAP_EVENT => String::from("Table_map"),
+            PRE_GA_WRITE_ROWS_EVENT => String::from("Write_rows_event_old"),
+
+            PRE_GA_UPDATE_ROWS_EVENT => String::from("Update_rows_event_old"),
+            PRE_GA_DELETE_ROWS_EVENT => String::from("Delete_rows_event_old"),
+            WRITE_ROWS_EVENT_V1 => String::from("Write_rows_v1"),
+            UPDATE_ROWS_EVENT_V1 => String::from("Update_rows_v1"),
+            DELETE_ROWS_EVENT_V1 => String::from("Delete_rows_v1"),
+            BEGIN_LOAD_QUERY_EVENT => String::from("Begin_load_query"),
+            EXECUTE_LOAD_QUERY_EVENT => String::from("Execute_load_query"),
+            INCIDENT_EVENT => String::from("Incident"),
+            HEARTBEAT_LOG_EVENT => String::from("Heartbeat"),
+            IGNORABLE_LOG_EVENT => String::from("Ignorable"),
+
+            ROWS_QUERY_LOG_EVENT => String::from("Rows_query"),
+            WRITE_ROWS_EVENT => String::from("Write_rows"),
+            UPDATE_ROWS_EVENT => String::from("Update_rows"),
+            DELETE_ROWS_EVENT => String::from("Delete_rows"),
+            GTID_LOG_EVENT => String::from("Gtid"),
+            ANONYMOUS_GTID_LOG_EVENT => String::from("Anonymous_Gtid"),
+            PREVIOUS_GTIDS_LOG_EVENT => String::from("Previous_gtids"),
+            PARTIAL_UPDATE_ROWS_EVENT => String::from("Update_rows_partial"),
+            TRANSACTION_CONTEXT_EVENT => String::from("Transaction_context"),
+            VIEW_CHANGE_EVENT => String::from("view_change"),
+            XA_PREPARE_LOG_EVENT => String::from("Xa_prepare"),
+            TRANSACTION_PAYLOAD_EVENT => String::from("transaction_payload"),
+            _ =>  format!("Unknown type=> {}", t)
+        }
+    }
+}
+
+
+struct LogHeader {
+    kind: u16,
+    log_pos:i32,
+    when: i32,
+    event_len: i32,
+    server_id: i32,
+    flags: i32,
+    checksum_alg: i32,
+    crc: i32,
+    log_file_name: Option<String>,
+}
+
+
+struct FormatDescriptionLogEvent {
+
+}
+
+
+impl LogHeader {
+    fn from(kind: u16) -> LogHeader{
+        LogHeader {
+            kind,
+            log_pos: 0,
+            when: 0,
+            event_len: 0,
+            server_id: 0,
+            flags: 0,
+            checksum_alg: 0,
+            crc: 0,
+            log_file_name: Option::None,
+        }
+    }
+
+    fn from_buffer(buffer: LogBuffer, event: FormatDescriptionLogEvent) {
+
+    }
+
+}

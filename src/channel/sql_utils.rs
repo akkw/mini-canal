@@ -1,27 +1,30 @@
-use std::borrow::Borrow;
-use crate::channel::mysql_socket::MysqlConnection;
-use crate::channel::read_write_packet::{read_bytes, read_header, write_pkg};
+use crate::channel::mysql_socket::{MysqlConnector};
+use crate::channel::read_write_packet::{read_bytes, read_header, write_body, write_pkg};
 use crate::channel::TcpSocketChannel;
 use crate::command::client::QueryCommandPacket;
-use crate::command::{HeaderPacket, Packet};
+use crate::command::{Packet};
 use crate::command::server::{EOFPacket, ErrorPacket, FieldPacket, OKPacket, ResultSetHeaderPacket, ResultSetPacket, RowDataPacket};
 
 pub struct MysqlQueryExecutor<'a> {
-    connection: MysqlConnection<'a>,
+    connection: &'a mut MysqlConnector,
 }
 
 impl<'a> MysqlQueryExecutor<'a> {
-    pub fn new(connection: MysqlConnection<'a>) -> Self {
-        Self { connection }
+    pub fn from(connection: &'a mut MysqlConnector) -> Self {
+        MysqlQueryExecutor {
+            connection
+        }
     }
 
 
     pub fn query(&mut self, sql: &str) -> Result<ResultSetPacket, String> {
         let mut query_command = QueryCommandPacket::from(sql);
         let command_bytes = query_command.to_bytes();
-        write_pkg(&mut self.connection.connector().channel().as_mut().unwrap(), &command_bytes);
-        let body = read_next_packet(&mut self.connection.connector().channel().as_mut().unwrap());
-        if body[0] < 0 {
+
+
+        write_body(&mut self.connection.channel_as_mut().as_mut().unwrap(), &command_bytes);
+        let body = read_next_packet(&mut self.connection.channel_as_mut().as_mut().unwrap());
+        if body[0] > 128 {
             let mut error = ErrorPacket::new();
             error.from_bytes(&body);
             return Result::Err(format!("{} \nwith error, sql: {}\n", error, sql));
@@ -32,7 +35,7 @@ impl<'a> MysqlQueryExecutor<'a> {
 
         let fields = self.read_columns_name(rs_header);
 
-        read_eof_packet(&mut self.connection.connector().channel().as_mut().unwrap());
+        read_eof_packet(&mut self.connection.channel_as_mut().as_mut().unwrap()).unwrap();
 
         let row_data_list = self.read_row_data();
 
@@ -52,14 +55,14 @@ impl<'a> MysqlQueryExecutor<'a> {
     pub fn query_multi(&mut self, sql: &str) -> Result<Vec<ResultSetPacket>, String> {
         let mut query_command = QueryCommandPacket::from(sql);
         let body = query_command.to_bytes();
-        write_pkg(&mut self.connection.connector().channel().as_mut().unwrap(), &body);
+        write_pkg(&mut self.connection.channel_as_mut().as_mut().unwrap(), &body);
 
 
         let mut result_sets = vec![];
         let mut more_result = true;
         while more_result {
-            let body = read_next_packet(&mut self.connection.connector().channel().as_mut().unwrap());
-            if body[0] < 0 {
+            let body = read_next_packet(&mut self.connection.channel_as_mut().as_mut().unwrap());
+            if body[0] > 127 {
                 let mut error = ErrorPacket::new();
                 error.from_bytes(&body);
                 return Result::Err(format!("{} \nwith error, sql: {}\n", error, sql));
@@ -69,7 +72,7 @@ impl<'a> MysqlQueryExecutor<'a> {
 
             let fields = self.read_columns_name(rs_handler);
 
-            more_result = read_eof_packet(&mut self.connection.connector().channel().as_mut().unwrap()).unwrap();
+            more_result = read_eof_packet(&mut self.connection.channel_as_mut().as_mut().unwrap()).unwrap();
 
             let row_data_list = self.read_row_data();
 
@@ -86,7 +89,6 @@ impl<'a> MysqlQueryExecutor<'a> {
             }
 
             result_sets.push(result_set)
-
         }
 
         Result::Ok(result_sets)
@@ -97,7 +99,7 @@ impl<'a> MysqlQueryExecutor<'a> {
         let mut body;
         for _i in 0..columns.column_count() {
             let mut fp = FieldPacket::new();
-            body = read_next_packet(&mut self.connection.connector().channel().as_mut().unwrap());
+            body = read_next_packet(&mut self.connection.channel_as_mut().as_mut().unwrap());
             fp.from_bytes(&body);
             fields.push(fp);
         }
@@ -107,11 +109,12 @@ impl<'a> MysqlQueryExecutor<'a> {
         let mut row_data_list = vec![];
 
         loop {
-            let body = read_next_packet(&mut self.connection.connector().channel().as_mut().unwrap());
+            let body = read_next_packet(&mut self.connection.channel_as_mut().as_mut().unwrap());
             if body[0] == 254 {
                 break;
             }
-            let row_data = RowDataPacket::new();
+            let mut row_data = RowDataPacket::new();
+            row_data.from_bytes(&body);
             row_data_list.push(row_data);
         }
         row_data_list
@@ -137,12 +140,11 @@ fn read_eof_packet(ch: &mut Box<dyn TcpSocketChannel>) -> Result<bool, String> {
 }
 
 pub struct MysqlUpdateExecutor<'a> {
-    connection: MysqlConnection<'a>,
+    connection: &'a mut MysqlConnector,
 }
 
 impl<'a> MysqlUpdateExecutor<'a> {
-
-    pub fn new(connection: MysqlConnection<'a>) -> Self {
+    pub fn new(connection: &'a mut MysqlConnector) -> Self {
         Self { connection }
     }
 
@@ -150,12 +152,12 @@ impl<'a> MysqlUpdateExecutor<'a> {
     pub fn update(&mut self, sql: &str) -> Result<u32, String> {
         let mut update_packet = QueryCommandPacket::from(sql);
         let update_bytes = update_packet.to_bytes();
-        write_pkg(&mut self.connection.connector().channel().as_mut().unwrap(), &update_bytes);
+        write_body(&mut self.connection.channel_as_mut().as_mut().unwrap(), &update_bytes);
 
-        let header = read_header(&mut self.connection.connector().channel().as_mut().unwrap()).unwrap();
-        let body = read_bytes(&mut self.connection.connector().channel().as_mut().unwrap(), header.packet_body_length());
+        let header = read_header(&mut self.connection.channel_as_mut().as_mut().unwrap()).unwrap();
+        let body = read_bytes(&mut self.connection.channel_as_mut().as_mut().unwrap(), header.packet_body_length());
 
-        if body[0] < 0 {
+        if body[0] > 127 {
             let mut error = ErrorPacket::new();
             error.from_bytes(&body);
             return Result::Err(format!("{} \nwith error, sql: {}\n", error, sql));
@@ -163,7 +165,7 @@ impl<'a> MysqlUpdateExecutor<'a> {
 
         let mut ok_packet = OKPacket::new();
         ok_packet.from_bytes(&body);
-        Result::Ok(read_unsigned_integer_little_endian(ok_packet.affected_rows()))
+        Result::Ok(ok_packet.affected_rows()[0] as u32)
     }
 }
 

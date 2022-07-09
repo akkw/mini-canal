@@ -8,9 +8,23 @@ pub struct AuthenticationInfo {
     enable_druid: bool,
 }
 
+impl Clone for AuthenticationInfo {
+    fn clone(&self) -> Self {
+        Self {
+            address: self.address.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            password: self.password.clone(),
+            default_database_name: self.default_database_name.clone(),
+            pwd_public_key: self.pwd_public_key.clone(),
+            enable_druid: self.enable_druid
+        }
+    }
+}
+
 impl AuthenticationInfo {
-    pub fn form(address: String, port: u16, username: String, password: String, default_database_name: String, pwd_public_key: String, enable_druid: bool) -> Self {
-        Self { address, port, username, password, default_database_name, pwd_public_key, enable_druid }
+    pub fn form(address: String, port: u16, username: String, password: String, default_database_name: String) -> Self {
+        Self { address, port, username, password, default_database_name, pwd_public_key : String::new(), enable_druid: false}
     }
 
 

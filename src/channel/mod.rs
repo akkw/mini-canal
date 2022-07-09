@@ -4,7 +4,7 @@ use std::str::FromStr;
 use chrono::Local;
 
 
-pub trait TcpSocketChannel {
+pub trait TcpSocketChannel: Send + 'static {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
     fn read_with_timeout(&mut self, buf: &mut [u8], timeout: u32) -> Result<usize>;
@@ -14,7 +14,6 @@ pub trait TcpSocketChannel {
     fn get_local_address(&self) -> Option<SocketAddrV4>;
     fn close(&self) -> Result<()>;
 }
-
 
 pub struct TcpChannel {
     channel: TcpStream,
