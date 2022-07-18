@@ -3,11 +3,12 @@ use std::str::{from_utf8};
 use crate::channel::{TcpChannel, TcpSocketChannel};
 use crate::channel::read_write_packet::{*};
 use crate::channel::sql_utils::{MysqlQueryExecutor, MysqlUpdateExecutor};
-use crate::command::{log_event, msc, Packet, write_header_and_body};
+use crate::command::{event, msc, Packet, write_header_and_body};
 use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
-use crate::command::log_event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, MARIA_SLAVE_CAPABILITY_MINE};
+use crate::command::event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, MARIA_SLAVE_CAPABILITY_MINE};
+use crate::instance::log_event;
 use crate::parse::support::AuthenticationInfo;
 
 
@@ -356,7 +357,7 @@ enum BinlogImage {
     None,
 }
 
-const BINLOG_CHECKSUM: u32 = log_event::BINLOG_CHECKSUM_ALG_OFF as u32;
+const BINLOG_CHECKSUM: u32 = event::BINLOG_CHECKSUM_ALG_OFF as u32;
 
 pub struct MysqlConnection {
     connector: MysqlConnector,
@@ -446,6 +447,10 @@ impl MysqlConnection {
         self.send_register_slave();
 
         self.send_binlog_dump(binlog_filename, binlog_position)
+
+
+
+
     }
 
     fn update_settings(&mut self) {

@@ -6,6 +6,7 @@ use bit_set::BitSet;
 use encoding::{DecoderTrap, Encoding};
 use encoding::all::ISO_8859_1;
 use encoding::DecoderTrap::Strict;
+use crate::channel::TcpSocketChannel;
 
 const NULL_LENGTH: i64 = -1;
 const DIG_PER_DEC1: i32 = 9;
@@ -17,15 +18,17 @@ const DIG_PER_INT32: usize = 9;
 const SIZE_OF_INT32: usize = 4;
 
 pub struct LogBuffer {
-    buffer: Box<[u8]>,
+    buffer: Vec<u8>,
     origin: usize,
     limit: usize,
     position: usize,
-    seminal: usize,
+    seminal: u8,
 }
 
 impl LogBuffer {
-    pub fn from(buffer: Box<[u8]>, origin: usize, limit: usize) -> Result<LogBuffer, String> {
+
+
+    pub fn from(buffer: Vec<u8>, origin: usize, limit: usize) -> Result<LogBuffer, String> {
         if origin + limit > buffer.len().try_into().unwrap() {
             return Result::Err(String::from(format!("capacity excceed: {}", origin + limit)));
         }
@@ -45,7 +48,7 @@ impl LogBuffer {
         let off = self.origin + pos;
 
         Result::Ok(LogBuffer {
-            buffer: copy_of_range(self.buffer.clone(), off, len),
+            buffer: copy_of_range(&self.buffer, off, len),
             origin: 0,
             limit: len,
             position: 0,
@@ -64,7 +67,7 @@ impl LogBuffer {
         self.position = end;
 
         Result::Ok(LogBuffer {
-            buffer: copy_of_range(self.buffer.clone(), self.position, end),
+            buffer: copy_of_range(&self.buffer, self.position, end),
             origin: 0,
             limit: len,
             position: 0,
@@ -74,7 +77,7 @@ impl LogBuffer {
 
     pub fn duplicate(&self) -> LogBuffer {
         LogBuffer {
-            buffer: copy_of_range(self.buffer.clone(), self.origin, self.origin + self.limit),
+            buffer: copy_of_range(&self.buffer, self.origin, self.origin + self.limit),
             origin: 0,
             limit: self.limit,
             position: 0,
@@ -82,9 +85,10 @@ impl LogBuffer {
         }
     }
 
-    pub fn position(self) -> usize {
+    pub fn position(&mut self) -> usize {
         self.position - self.origin
     }
+
 
     pub fn up_position(&mut self, new_position: usize) -> Result<bool, String> {
         if new_position > self.limit {
@@ -94,7 +98,7 @@ impl LogBuffer {
         Result::Ok(true)
     }
 
-    pub fn forward(&mut self, len: usize) -> Result<bool, String> {
+    pub fn forward(&mut self, len: usize) -> Result<&mut LogBuffer, String> {
         if self.position + len > self.origin + self.limit {
             let position = self.position;
             let origin = self.origin;
@@ -102,7 +106,7 @@ impl LogBuffer {
         }
 
         self.position += len;
-        Result::Ok(true)
+        Result::Ok(self)
     }
 
     pub fn consume(&mut self, len: usize) -> Result<bool, String> {
@@ -794,6 +798,15 @@ impl LogBuffer {
             ;
             ;
             ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
         }
         return Result::Err(String::from(format!("limit excceed: {}", pos)));
     }
@@ -816,6 +829,15 @@ impl LogBuffer {
             self.position += 1;
             return return Result::Ok((i as i64 | (i1 as i64) << 8 | (i2 as i64) << 16 | (i3 as i64) << 24
                 | (i4 as i64) << 32 | (i5 as i64) << 40 | (i6 as i64) << 48) as i64);;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
             ;
             ;
             ;
@@ -902,6 +924,15 @@ impl LogBuffer {
             return return Result::Ok((i6 as i64 | (i5 as i64) << 8 | (i4 as i64) << 16
                 | (i3 as i64) << 24 | (i2 as i64) < 32 | (i1 as i64) << 40 | (i as i64) << 48)
                 as i64);;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
+            ;
             ;
             ;
             ;
@@ -1585,7 +1616,7 @@ impl LogBuffer {
         set
     }
 
-    pub fn get_bit_map(&mut self, pos: usize, len: usize) -> BitSet {
+    pub fn get_bit_map(&mut self, len: usize) -> BitSet {
         let mut set = BitSet::new();
         self.fill_bitmap_map(&mut set, len);
         set
@@ -1688,13 +1719,143 @@ impl LogBuffer {
         }
         String::new()
     }
+    pub fn new() -> Self {
+        Self { buffer: vec![], origin: 0, limit: 0, position: 0, seminal: 0 }
+    }
+}
+
+const DEFAULT_INITIAL_CAPACITY: usize = 8192;
+const DEFAULT_GROWTH_FACTOR: f32 = 2.0;
+const BIN_LOG_HEADER_SIZE: u32 = 4;
+const MASTER_HEARTBEAT_PERIOD_SECONDS: u32 = 15;
+const READ_TIMEOUT_MILLISECONDS: u32 = (MASTER_HEARTBEAT_PERIOD_SECONDS + 10) * 1000;
+const COM_BINLOG_DUMP: u32 = 18;
+const NET_HEADER_SIZE: usize = 4;
+const SQLSTATE_LENGTH: usize = 5;
+const PACKET_LEN_OFFSET: usize = 0;
+const PACKET_SEQ_OFFSET: usize = 3;
+const MAX_PACKET_LENGTH: usize = (256 * 256 * 256 - 1);
+
+struct DirectLogFetcher {
+    log_buffer: LogBuffer,
+    factor: f32,
+    channel: Option<Box<dyn TcpSocketChannel>>,
+    isem: bool,
+}
+
+impl DirectLogFetcher {
+    pub fn new() -> Self {
+        Self {
+            log_buffer: LogBuffer {
+                buffer: vec![],
+                origin: 0,
+                limit: 0,
+                position: 0,
+                seminal: 0,
+            },
+            factor: DEFAULT_GROWTH_FACTOR,
+            channel:  Option::None,
+            isem: false,
+        }
+    }
+
+    pub fn from_init_capacity(init_capacity: u32) -> DirectLogFetcher {
+        DirectLogFetcher::from_init_factor(init_capacity, DEFAULT_GROWTH_FACTOR)
+    }
+
+    pub fn from_init_factor(init_capacity: u32, growth_factor: f32) -> DirectLogFetcher {
+        DirectLogFetcher {
+            log_buffer: LogBuffer {
+                buffer: vec![],
+                origin: 0,
+                limit: 0,
+                position: 0,
+                seminal: 0,
+            },
+            factor: growth_factor,
+            channel: Option::None,
+            isem: false,
+        }
+    }
+
+    pub fn start(&mut self, channel: Option<Box<dyn TcpSocketChannel>>) {
+        self.channel = channel;
+    }
+
+    pub fn fetch(&mut self) -> Result<bool, String> {
+        if !self.fetch0(0, NET_HEADER_SIZE) {
+            println!("Reached end of input stream while fetching header");
+            return Result::Ok(false);
+        }
+
+        let mut net_len = self.log_buffer.get_uint24_pos(PACKET_LEN_OFFSET)?;
+        let mut net_num = self.log_buffer.get_uint8_pos(PACKET_LEN_OFFSET)?;
+        if !self.fetch0(NET_HEADER_SIZE, net_len as usize) {
+            println!("{}",format!("Reached end of input stream: packet # {}, len = {}", net_num, net_len));
+            return  Result::Ok(false);
+        }
+
+        let mark = self.log_buffer.get_uint8_pos(NET_HEADER_SIZE)?;
+        if mark != 0 {
+            if mark == 255 {
+                self.log_buffer.position = NET_HEADER_SIZE + 1;
+                let error = self.log_buffer.get_int16()?;
+                let sql_state = self.log_buffer.forward(1)?.get_fix_string_len(SQLSTATE_LENGTH).unwrap();
+                let err_msg = self.log_buffer.get_fix_string_len(self.log_buffer.limit - self.log_buffer.position).unwrap();
+                return Result::Err(format!("Received error packet: errno = {}, sqlstate = {} errmsg = {}", error, sql_state, err_msg));
+            } else if 254 == mark {
+                println!("Received EOF packet from server, apparent master disconnected. It's may be duplicate slaveId , check instance config");
+                return Result::Ok(false);
+            } else {
+                println!("Unexpected response {} while fetching binlog: packet #{}, len: {} ", mark, net_num, net_len)
+            }
+        }
+
+        if self.isem {
+            let semimark = self.log_buffer.get_uint8_pos(NET_HEADER_SIZE + 1)?;
+            let semival = self.log_buffer.get_uint8_pos(NET_HEADER_SIZE + 1)?;
+            self.log_buffer.seminal = semival;
+        }
+
+        while net_len == MAX_PACKET_LENGTH as u32{
+            if !self.fetch0(0, MAX_PACKET_LENGTH) {
+                println!("Reached end of input stream while fetching header");
+                return Result::Ok(false);
+            }
+            net_len = self.log_buffer.get_uint24_pos(PACKET_LEN_OFFSET)?;
+            net_num = self.log_buffer.get_uint8_pos(PACKET_SEQ_OFFSET)?;
+
+            if !self.fetch0(self.log_buffer.limit, net_len as usize) {
+                println!("Reached end of input stream: packet # {}, len: {}", net_num, net_len);
+                return Result::Ok(false);
+            }
+        }
+        if self.isem {
+            self.log_buffer.origin = NET_HEADER_SIZE + 3;
+        } else {
+            self.log_buffer.origin = NET_HEADER_SIZE + 1;
+        }
+        self.log_buffer.position = self.log_buffer.origin;
+        self.log_buffer.limit -= self.log_buffer.origin;
+        Result::Ok(true)
+    }
+
+    fn fetch0(&mut self, off: usize, len: usize) -> bool{
+        self.channel.as_mut().unwrap().read_offset_len(&mut self.log_buffer.buffer, off, len);
+        if self.log_buffer.limit < off + len {
+            self.log_buffer.limit = off + len;
+        }
+        true
+    }
 }
 
 
-fn copy_of_range(buffer: Box<[u8]>, from: usize, to: usize) -> Box<[u8]> {
+fn copy_of_range(buffer: &Vec<u8>, from: usize, to: usize) -> Vec<u8> {
     let mut bytes = vec![];
     for i in from..to {
         bytes.push(buffer[i])
     }
-    Box::from(bytes)
+    bytes
 }
+
+

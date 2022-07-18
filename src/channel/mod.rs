@@ -4,11 +4,12 @@ use std::str::FromStr;
 use chrono::Local;
 
 
-pub trait TcpSocketChannel: Send + 'static {
+pub trait TcpSocketChannel: {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
     fn read_with_timeout(&mut self, buf: &mut [u8], timeout: u32) -> Result<usize>;
     fn read_len(&mut self, len: i64) -> Box<[u8]>;
+    fn read_offset_len(&mut self, buf: &mut [u8], off: usize, len: usize) -> Result<usize>;
     fn is_connected(&self) -> bool;
     fn get_remote_address(&self) -> Option<SocketAddrV4>;
     fn get_local_address(&self) -> Option<SocketAddrV4>;
@@ -83,6 +84,10 @@ impl TcpSocketChannel for TcpChannel {
             }
         }
         Box::from(out)
+    }
+
+    fn read_offset_len(&mut self, buf: &mut [u8], off: usize, len: usize) -> Result<usize> {
+        self.channel.read(&mut buf[off..len])
     }
 
     fn is_connected(&self) -> bool {

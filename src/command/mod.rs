@@ -189,7 +189,7 @@ pub mod server;
 
 pub mod client;
 
-pub mod log_event;
+pub mod event;
 
 /**
  * <pre>
@@ -442,3 +442,21 @@ fn write_fixed_length_bytes(data: &[u8], being: usize, len: usize, out: &mut Vec
         out.push(data[i])
     }
 }
+// int ans=0;
+// for(int i=0;i<4;i++){
+//      ans<<=8;//左移 8 位
+//      ans|=a[3-i];//保存 byte 值到 ans 的最低 8 位上
+//      intPrint(ans);
+// }
+
+pub fn get_i64(bytes: &[u8]) -> i64 {
+    ((bytes[0] as i64) << 56) |
+        (bytes[1] as i64 & 0xff) << 48 |
+        (bytes[2] as i64 & 0xff) << 40 |
+        (bytes[3] as i64 & 0xff) << 32 |
+        (bytes[4] as i64 & 0xff) << 24 |
+        (bytes[5] as i64 & 0xff) << 16 |
+        (bytes[6] as i64 & 0xff) << 8 |
+        (bytes[7] as i64 & 0xff)
+}
+
