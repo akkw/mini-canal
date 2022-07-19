@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::f32::consts::E;
 use std::fmt::{Display, Formatter, write};
 use std::iter::Map;
+use std::mem::take;
 use std::ops::Add;
 use std::os::unix::raw::gid_t;
 use bit_set::BitSet;
@@ -389,7 +390,7 @@ impl LogHeader {
             }
             return Option::Some(header);
         }
-        header.checksum_alg = description_event.event.header.checksum_alg;
+        header.checksum_alg = description_event.start_log_event_v3.event.header.checksum_alg;
         header.processCheckSum(buffer);
         Option::Some(header)
     }
@@ -800,7 +801,7 @@ impl ExecuteLoadQueryLogEvent {
 
 
 pub struct FormatDescriptionLogEvent {
-    event: Event,
+    start_log_event_v3: StartLogEventV3,
     binlog_version: u16,
     server_version: Option<String>,
     common_header_len: usize,
@@ -812,7 +813,7 @@ pub struct FormatDescriptionLogEvent {
 impl Clone for FormatDescriptionLogEvent {
     fn clone(&self) -> Self {
         FormatDescriptionLogEvent {
-            event: self.event.clone(),
+            start_log_event_v3: StartLogEventV3::new(),
             binlog_version: self.binlog_version,
             server_version: Option::None,
             common_header_len: self.common_header_len,
@@ -871,13 +872,11 @@ impl FormatDescriptionLogEvent {
     pub const CHECKSUM_VERSION_SPLIT: [u8; 3] = [5, 6, 1];
     pub const CHECKSUM_VERSION_PRODUCT: u32 = ((FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[0] as u32 * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[1] as u32) * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[2] as u32) as u32;
     #[allow(arithmetic_overflow)]
-    pub fn from(&mut self, header: LogHeader, buffer: &mut LogBuffer, description_event: FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
+
+    pub fn from(&mut self, header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
         buffer.up_position(description_event.common_header_len);
         let mut event = FormatDescriptionLogEvent {
-            event: Event {
-                header,
-                semival: 0,
-            },
+            start_log_event_v3: StartLogEventV3::new(),
             binlog_version: buffer.get_uint16()?,
             server_version: buffer.get_fix_string_len(FormatDescriptionLogEvent::ST_SERVER_VER_LEN),
             common_header_len: 0,
@@ -885,6 +884,7 @@ impl FormatDescriptionLogEvent {
             post_header_len: Box::from([]),
             server_version_split: [0, 0, 0],
         };
+        event.start_log_event_v3 = StartLogEventV3::from(header, buffer, description_event).unwrap();
         buffer.up_position((FormatDescriptionLogEvent::LOG_EVENT_MINIMAL_HEADER_LEN + FormatDescriptionLogEvent::ST_COMMON_HEADER_LEN_OFFSET) as usize)?;
         self.common_header_len = buffer.get_uint8()? as usize;
         if self.common_header_len < FormatDescriptionLogEvent::OLD_HEADER_LEN as usize {
@@ -908,18 +908,15 @@ impl FormatDescriptionLogEvent {
         Result::Ok(event)
     }
 
-    pub fn from_binlog_version_binlog_check_sum(binlog_version: u8, binlog_check_num: u8) -> FormatDescriptionLogEvent {
+    pub fn from_binlog_version_binlog_check_sum(binlog_version: u16, binlog_check_num: u8) -> FormatDescriptionLogEvent {
         let mut event = FormatDescriptionLogEvent::from_binlog_version(binlog_version);
-        event.event.header.checksum_alg = binlog_check_num;
+        event.start_log_event_v3.event.header.checksum_alg = binlog_check_num;
         event
     }
-    pub fn from_binlog_version(binlog_version: u8) -> FormatDescriptionLogEvent {
+    pub fn from_binlog_version(binlog_version: u16) -> FormatDescriptionLogEvent {
         let mut event = FormatDescriptionLogEvent {
-            event: Event {
-                header: LogHeader::from_kind(START_EVENT_V3),
-                semival: 0,
-            },
-            binlog_version: 0,
+            start_log_event_v3: StartLogEventV3::from_none(),
+            binlog_version,
             server_version: Option::None,
             common_header_len: 0,
             number_of_event_types: 0,
@@ -1066,7 +1063,7 @@ impl FormatDescriptionLogEvent {
     }
     pub fn new() -> Self {
         Self {
-            event: Event::new(),
+            start_log_event_v3: StartLogEventV3::new(),
             binlog_version: 0,
             server_version: Option::None,
             common_header_len: 0,
@@ -1410,7 +1407,20 @@ impl LoadLogEvent {
 //
 // }
 
-pub struct PreviousGtidsLogEvent {}
+pub struct PreviousGtidsLogEvent {
+    event: Event,
+}
+
+impl PreviousGtidsLogEvent {
+    pub fn from(header: &LogHeader, _buffer: &mut LogBuffer, _description_event: &FormatDescriptionLogEvent) -> PreviousGtidsLogEvent {
+        let mut event = PreviousGtidsLogEvent {
+            event: Event::new(),
+        };
+        event.event.header = header.clone();
+        event
+    }
+}
+
 
 pub struct QueryLogEvent {
     event: Event,
@@ -1829,9 +1839,76 @@ impl QueryLogEvent {
     }
 }
 
-pub struct RandLogEvent {}
+pub struct RandLogEvent {
+    event: Event,
+    seed1: i64,
+    seed2: i64,
+}
 
-pub struct RotateLogEvent {}
+impl RandLogEvent {
+    const RAND_SEED1_OFFSET: u8 = 0;
+    const RAND_SEED2_OFFSET: u8 = 8;
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = RandLogEvent {
+            event: Event::new(),
+            seed1: 0,
+            seed2: 0,
+        };
+        event.event.header = header.clone();
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[RAND_EVENT - 1] as usize);
+        event.seed1 = buffer.get_int64().ok()?;
+        event.seed2 = buffer.get_int64().ok()?;
+        Option::Some(event)
+    }
+
+    pub fn get_query(&self) -> String {
+        String::from(format!("SET SESSION rand_seed1 = {} , rand_seed2 = {}", self.seed1, self.seed2))
+    }
+}
+
+pub struct RotateLogEvent {
+    event: Event,
+    file_name: Option<String>,
+    position: i64,
+}
+
+impl RotateLogEvent {
+    const R_POS_OFFSET: usize = 0;
+    const R_IDENT_OFFSET: u8 = 8;
+    const FN_REFLEN: usize = 512;
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = RotateLogEvent {
+            event: Event::new(),
+            file_name: None,
+            position: 0,
+        };
+        let common_header_len = description_event.common_header_len;
+        let post_header_len = description_event.post_header_len[ROTATE_EVENT - 1] as usize;
+
+        buffer.up_position(common_header_len + Self::R_POS_OFFSET);
+
+        event.position = if post_header_len != 0 { buffer.get_int64().ok()? } else { 4 };
+
+        let filename_offset = common_header_len + post_header_len;
+        let mut filename_len = buffer.limit() - filename_offset;
+
+        if filename_len > Self::FN_REFLEN - 1 {
+            filename_len = Self::FN_REFLEN - 1;
+        }
+
+        buffer.up_position(filename_offset);
+        event.file_name = buffer.get_fix_string_len(filename_len);
+        Option::Some(event)
+    }
+
+
+    pub fn file_name(&self) -> &Option<String> {
+        &self.file_name
+    }
+    pub fn position(&self) -> i64 {
+        self.position
+    }
+}
 
 pub struct RowsLogBuffer {}
 
@@ -1931,7 +2008,29 @@ impl RowsLogEvent {
         event
     }
 
-    pub fn fill_table(context: &LogContext) {}
+    pub fn fill_table(&mut self, context: &mut LogContext) {
+        self.table_map_log_event = context.get_table(self.table_id).clone();
+
+        if self.flags & Self::STMT_END_F as u16 != 0 {
+            context.clear_all_tables()
+        }
+
+        let mut json_column_count = 0;
+        let column_cnt = self.table_map_log_event.column_cnt() as usize;
+
+        let column_info = self.table_map_log_event.column_info();
+
+        let mut i = 0;
+        while i < column_cnt {
+            let info = column_info.get(i).unwrap();
+
+            if info.kind == MYSQL_TYPE_JSON {
+                json_column_count += 1;
+            }
+            self.json_column_count = json_column_count;
+            i += 1;
+        }
+    }
     pub fn new() -> Self {
         Self {
             event: Event::new(),
@@ -1948,11 +2047,93 @@ impl RowsLogEvent {
     }
 }
 
-pub struct RowsQueryLogEvent {}
+pub struct RowsQueryLogEvent {
+    ignorable_log_event: IgnorableLogEvent,
+    rows_query: Option<String>,
+}
 
-pub struct StartLogEventV3 {}
+impl RowsQueryLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let ignorable_log_event = IgnorableLogEvent::from(header, buffer, description_event);
 
-pub struct StopLogEvent {}
+        let common_header_len = description_event.common_header_len;
+        let post_header_len = description_event.post_header_len[header.kind - 1] as usize;
+
+        let offset = common_header_len + post_header_len + 1;
+
+        let len = buffer.limit() - offset;
+
+        let mut event = RowsQueryLogEvent {
+            ignorable_log_event,
+            rows_query: None,
+        };
+        event.rows_query = Option::Some(buffer.get_full_string_pos_len(offset, len).unwrap());
+        Option::Some(event)
+    }
+}
+
+pub struct StartLogEventV3 {
+    event: Event,
+    binlog_version: u16,
+    server_version: Option<String>,
+}
+
+impl StartLogEventV3 {
+    const ST_SERVER_VER_LEN: usize = 50;
+    const ST_BINLOG_VER_OFFSET: usize = 0;
+    const ST_SERVER_VER_OFFSET: usize = 2;
+
+
+
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = StartLogEventV3 {
+            event: Event::new(),
+            binlog_version: 0,
+            server_version: None
+        };
+        event.event.header = header.clone();
+        buffer.up_position(description_event.common_header_len);
+        event.binlog_version = buffer.get_uint16().ok()?;
+        event.server_version = Option::Some(buffer.get_fix_string_len(Self::ST_SERVER_VER_LEN)?);
+        Option::Some(event)
+    }
+
+    pub fn from_none() -> Self{
+        let mut event = StartLogEventV3 {
+            event: Event::new(),
+            binlog_version: 0,
+            server_version: None
+        };
+        event.event.header = LogHeader::from_kind(START_EVENT_V3);
+        event
+    }
+
+
+    pub fn binlog_version(&self) -> u16 {
+        self.binlog_version
+    }
+    pub fn server_version(&self) -> &Option<String> {
+        &self.server_version
+    }
+    pub fn new() -> Self {
+        Self { event: Event::new(), binlog_version: 0, server_version: None }
+    }
+}
+
+pub struct StopLogEvent {
+    event: Event,
+}
+
+impl StopLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = StopLogEvent {
+            event: Event::new()
+        };
+        event.event.header = header.clone();
+        Option::Some(event)
+    }
+
+}
 
 pub struct TableMapLogEvent {
     event: Event,
@@ -2451,6 +2632,24 @@ impl ColumnInfo {
     }
 }
 
+impl Clone for ColumnInfo {
+    fn clone(&self) -> Self {
+        ColumnInfo {
+            kind: self.kind,
+            meta: self.meta,
+            name: self.name.clone(),
+            unsigned: self.unsigned,
+            pk: self.pk,
+            set_enum_values: self.set_enum_values.to_vec(),
+            charset: self.charset,
+            geo_type: self.geo_type,
+            nullable: self.nullable,
+            visibility: self.visibility,
+            array: self.array,
+        }
+    }
+}
+
 struct Pair {
     col_index: i32,
     col_charset: i32,
@@ -2568,6 +2767,26 @@ impl LogContext {
     }
     pub fn set_position(&mut self, position: LogPosition) {
         self.position = position;
+    }
+
+    pub fn clear_all_tables(&mut self) {
+        self.map_table.clear()
+    }
+}
+
+impl Clone for TableMapLogEvent {
+    fn clone(&self) -> Self {
+        TableMapLogEvent {
+            event: self.event.clone(),
+            dbname: self.dbname.clone(),
+            tblname: self.tblname.clone(),
+            column_cnt: self.column_cnt,
+            column_info: self.column_info.to_vec(),
+            table_id: self.table_id,
+            null_bits: self.null_bits.clone(),
+            default_charset: self.default_charset,
+            exist_optional_meta_data: self.exist_optional_meta_data,
+        }
     }
 }
 
