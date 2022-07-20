@@ -8,6 +8,7 @@ use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
 use crate::command::event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, MARIA_SLAVE_CAPABILITY_MINE};
+use crate::instance::log_buffer::DirectLogFetcher;
 use crate::parse::support::AuthenticationInfo;
 
 
@@ -444,9 +445,9 @@ impl MysqlConnection {
         self.update_settings();
         self.load_binlog_checksum();
         self.send_register_slave();
-
-        self.send_binlog_dump(binlog_filename, binlog_position)
-
+        self.send_binlog_dump(binlog_filename, binlog_position);
+        let mut fetcher = DirectLogFetcher::new();
+        fetcher.start(Option::Some(&mut self.connector.channel.as_mut().unwrap()))
 
 
 

@@ -1607,14 +1607,14 @@ impl LogBuffer {
 
 
 
-struct DirectLogFetcher {
+pub struct DirectLogFetcher<'a> {
     log_buffer: LogBuffer,
     factor: f32,
-    channel: Option<Box<dyn TcpSocketChannel>>,
+    channel: Option<&'a mut Box<dyn TcpSocketChannel>>,
     isem: bool,
 }
 
-impl DirectLogFetcher {
+impl <'a>DirectLogFetcher<'a> {
     const DEFAULT_INITIAL_CAPACITY: usize = 8192;
     const DEFAULT_GROWTH_FACTOR: f32 = 2.0;
     const BIN_LOG_HEADER_SIZE: u32 = 4;
@@ -1641,11 +1641,11 @@ impl DirectLogFetcher {
         }
     }
 
-    pub fn from_init_capacity(init_capacity: u32) -> DirectLogFetcher {
+    pub fn from_init_capacity(init_capacity: u32) -> DirectLogFetcher<'a> {
         DirectLogFetcher::from_init_factor(init_capacity, Self::DEFAULT_GROWTH_FACTOR)
     }
 
-    pub fn from_init_factor(init_capacity: u32, growth_factor: f32) -> DirectLogFetcher {
+    pub fn from_init_factor(init_capacity: u32, growth_factor: f32) -> DirectLogFetcher<'a> {
         DirectLogFetcher {
             log_buffer: LogBuffer {
                 buffer: vec![],
@@ -1660,7 +1660,7 @@ impl DirectLogFetcher {
         }
     }
 
-    pub fn start(&mut self, channel: Option<Box<dyn TcpSocketChannel>>) {
+    pub fn start(&mut self, channel: Option<&'a mut Box<dyn TcpSocketChannel>>) {
         self.channel = channel;
     }
 

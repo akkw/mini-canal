@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use bigdecimal::BigDecimal;
 use bit_set::BitSet;
 use uuid::Uuid;
 use crate::command::{get_i64};
@@ -2886,9 +2887,9 @@ impl XaPrepareLogEvent {
 
         let offset = common_header_len + post_header_len;
 
-        buffer.up_position(offet);
+        buffer.up_position(offset);
 
-        event.one_phase = if buffer.get_int8() == 0x00 { false } else { true };
+        event.one_phase = if buffer.get_int8().unwrap() == 0x00 { false } else { true };
         event.format_id = buffer.get_int32().unwrap();
         event.gtrid_length = buffer.get_int32().unwrap();
         event.bqual_length = buffer.get_int32().unwrap();
