@@ -169,7 +169,7 @@ impl<'a> MysqlUpdateExecutor<'a> {
     }
 }
 
-fn read_unsigned_integer_little_endian(buf: &[u8]) -> u32 {
+fn _read_unsigned_integer_little_endian(buf: &[u8]) -> u32 {
     (buf[0] as u8 & 0xFF) as u32 | ((buf[1] as u32 & 0xFF) << 8)
         | ((buf[2] as u32 & 0xFF) << 16) | ((buf[3] as u32 & 0xFF) << 24)
 }

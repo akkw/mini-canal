@@ -303,7 +303,7 @@ fn write_unsigned_short_little_endian(data: u16, mut start: usize, buf: &mut [u8
     buf[start] = ((data >> 8) & 0xFF) as u8;
 }
 
-fn read_binary_coded_length_bytes(buf: &[u8], mut index: usize) -> &[u8] {
+fn read_binary_coded_length_bytes(buf: &[u8], index: usize) -> &[u8] {
     let mark = buf[index] & 0xFF;
     return match mark {
         251 => {
@@ -433,11 +433,11 @@ fn write_binary_coded_length_bytes(src: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-fn write_fixed_length_bytes_from_start(data: &[u8], len: usize, out: &mut Vec<u8>) {
+fn write_fixed_length_bytes_from_start(_data: &[u8], _len: usize, _out: &mut Vec<u8>) {
     todo!()
 }
 
-fn write_fixed_length_bytes(data: &[u8], being: usize, len: usize, out: &mut Vec<u8>) {
+fn _write_fixed_length_bytes(data: &[u8], being: usize, len: usize, out: &mut Vec<u8>) {
     for i in being..len {
         out.push(data[i])
     }

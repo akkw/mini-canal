@@ -8,7 +8,6 @@ use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
 use crate::command::event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, MARIA_SLAVE_CAPABILITY_MINE};
-use crate::instance::log_event;
 use crate::parse::support::AuthenticationInfo;
 
 
@@ -201,7 +200,7 @@ impl MysqlConnector {
         let marker = body[0];
 
         if marker == 254 || marker == 1 {
-            let mut auth_data;
+            let auth_data;
             let mut plugin_name = "";
             if marker == 1 {
                 let mut auth_switch_request_more_data = AuthSwitchRequestMoreData::new();
@@ -378,7 +377,7 @@ trait SqlProcess {
 
 impl MysqlConnection {
     pub fn from(address: String, port: u16, username: String, password: String) -> MysqlConnection {
-        let mut connection = MysqlConnection::new();
+        let connection = MysqlConnection::new();
         connection.init(address, port, username, password)
     }
 
