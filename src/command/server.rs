@@ -31,22 +31,11 @@ impl<'a> AuthSwitchRequestMoreData<'a> {
         self.auth_data = auth_data;
     }
 }
-
-impl<'a> AuthSwitchRequestMoreData<'a> {
-    fn set_command(&mut self, command: u8) {
-        self.command = command
-    }
-
-    fn get_command(&self) -> u8 {
-        self.command
-    }
-}
-
 impl<'a, 'b: 'a> Packet<'b> for AuthSwitchRequestMoreData<'a> {
     fn from_bytes(&mut self, buf: &'b [u8]) {
         let mut index = 0;
         self.status = buf[index] as i32;
-        index += 1;
+        // index += 1;
         self.auth_data = read_none_terminated_bytes(&buf);
     }
 

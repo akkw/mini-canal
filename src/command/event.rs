@@ -1,16 +1,8 @@
 use std::collections::HashMap;
-use std::f32::consts::E;
-use std::fmt::{Display, Formatter, write};
-use std::iter::Map;
-use std::mem::take;
-use std::ops::Add;
-use std::os::unix::raw::gid_t;
+use std::fmt::{Display, Formatter};
 use bit_set::BitSet;
-use chrono::format::parse;
-use num::BigInt;
 use uuid::Uuid;
-use crate::command::{get_i64, HeaderPacket};
-use crate::command::event::LogEvent::FormatDescriptionLog;
+use crate::command::{get_i64};
 use crate::instance::log_buffer::LogBuffer;
 
 
@@ -375,28 +367,28 @@ impl LogHeader {
                     (FormatDescriptionLogEvent::LOG_EVENT_MINIMAL_HEADER_LEN + FormatDescriptionLogEvent::ST_COMMON_HEADER_LEN_OFFSET) as usize
                 ).ok()? as usize;
 
-                buffer.up_position(common_header_len + FormatDescriptionLogEvent::ST_SERVER_VER_OFFSET as usize);
+                buffer.up_position(common_header_len + FormatDescriptionLogEvent::ST_SERVER_VER_OFFSET as usize).unwrap();
                 let server_version = buffer.get_fix_string_len(FormatDescriptionLogEvent::ST_SERVER_VER_LEN)?;
                 let mut version_split = [0, 0, 0];
                 FormatDescriptionLogEvent::do_server_version_split(&server_version, &mut version_split);
                 header.checksum_alg = BINLOG_CHECKSUM_ALG_UNDEF;
 
                 if FormatDescriptionLogEvent::version_product(&mut version_split) >= FormatDescriptionLogEvent::CHECKSUM_VERSION_PRODUCT {
-                    buffer.up_position(header.event_len - (BINLOG_CHECKSUM_LEN - BINLOG_CHECKSUM_ALG_DESC_LEN) as usize);
+                    buffer.up_position(header.event_len - (BINLOG_CHECKSUM_LEN - BINLOG_CHECKSUM_ALG_DESC_LEN) as usize).unwrap();
                     header.checksum_alg = buffer.get_uint8().ok()?
                 }
 
-                header.processCheckSum(buffer);
+                header.process_check_sum(buffer);
             }
             return Option::Some(header);
         }
         header.checksum_alg = description_event.start_log_event_v3.event.header.checksum_alg;
-        header.processCheckSum(buffer);
+        header.process_check_sum(buffer);
         Option::Some(header)
     }
 
 
-    fn processCheckSum(&mut self, buffer: &mut LogBuffer) {
+    fn process_check_sum(&mut self, buffer: &mut LogBuffer) {
         if self.checksum_alg != BINLOG_CHECKSUM_ALG_OFF && self.checksum_alg != BINLOG_CHECKSUM_ALG_UNDEF {
             self.crc = buffer.get_uint32_pos(self.event_len - BINLOG_CHECKSUM_ALG_DESC_LEN as usize).unwrap();
         }
@@ -602,9 +594,9 @@ impl AppendBlockLogEvent {
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[header.kind - 1] as usize;
         let total_header_len = common_header_len + post_header_len;
-        buffer.up_position(common_header_len + Self::AB_FILE_ID_OFFSET);
+        buffer.up_position(common_header_len + Self::AB_FILE_ID_OFFSET).unwrap();
         event.filed_id = buffer.get_uint32().unwrap();
-        buffer.up_position(post_header_len);
+        buffer.up_position(post_header_len).unwrap();
         event.block_len = buffer.limit() - total_header_len;
         event.block_buf = buffer.duplicate_len(event.block_len).unwrap();
         event
@@ -699,8 +691,9 @@ impl DeleteFileLogEvent {
             event: Event::new(),
             filed_id: 0,
         };
+        event.event.header = header.clone();
         let common_header_len = description_event.common_header_len;
-        buffer.up_position(common_header_len + DeleteFileLogEvent::DF_FILE_ID_OFFSET);
+        buffer.up_position(common_header_len + DeleteFileLogEvent::DF_FILE_ID_OFFSET).unwrap();
         event.filed_id = buffer.get_uint32().unwrap();
         event
     }
@@ -736,7 +729,7 @@ impl ExecuteLoadLogEvent {
         };
         event.event.header = (*header).clone();
         let common_header_len = description_event.common_header_len;
-        buffer.up_position(common_header_len + Self::EL_FILE_ID_OFFSET as usize);
+        buffer.up_position(common_header_len + Self::EL_FILE_ID_OFFSET as usize).unwrap();
         event.file_id = buffer.get_uint32().unwrap();
         event
     }
@@ -756,6 +749,7 @@ pub struct ExecuteLoadQueryLogEvent {
 }
 
 impl ExecuteLoadQueryLogEvent {
+
     const LOAD_DUP_ERROR: u8 = 0;
     const LOAD_DUP_IGNORE: u8 = Self::LOAD_DUP_ERROR + 1;
     const LOAD_DUP_REPLACE: u8 = Self::LOAD_DUP_IGNORE + 1;
@@ -772,7 +766,7 @@ impl ExecuteLoadQueryLogEvent {
             fn_pos_end: 0,
             dup_hand_ling: 0,
         };
-        buffer.up_position(description_event.common_header_len + Self::ELQ_FILE_ID_OFFSET as usize);
+        buffer.up_position(description_event.common_header_len + Self::ELQ_FILE_ID_OFFSET as usize).unwrap();
         event.file_id = buffer.get_uint32()?;
         event.fn_pos_start = buffer.get_uint32()? as usize;
         event.dup_hand_ling = buffer.get_uint8()?;
@@ -874,7 +868,7 @@ impl FormatDescriptionLogEvent {
     #[allow(arithmetic_overflow)]
 
     pub fn from(&mut self, header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
-        buffer.up_position(description_event.common_header_len);
+        buffer.up_position(description_event.common_header_len).unwrap();
         let mut event = FormatDescriptionLogEvent {
             start_log_event_v3: StartLogEventV3::new(),
             binlog_version: buffer.get_uint16()?,
@@ -950,7 +944,7 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[TABLE_MAP_EVENT - 1] = Self::TABLE_MAP_HEADER_LEN;
                 event.post_header_len[WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V1;
                 event.post_header_len[UPDATE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
-                event.post_header_len[Self::DELETE_FILE_HEADER_LEN - 1] - Self::ROWS_HEADER_LEN_V1;
+                let _ = event.post_header_len[Self::DELETE_FILE_HEADER_LEN - 1] - Self::ROWS_HEADER_LEN_V1;
                 /*
                  * We here have the possibility to simulate a master of before
                  * we changed the table map id to be stored in 6 bytes: when it
@@ -1100,8 +1094,8 @@ impl GtidLogEvent {
         event.event.header = header.clone();
 
         let common_header_len = description_event.common_header_len;
-        buffer.up_position(common_header_len);
-        event.commit_flag = (buffer.get_uint8().unwrap() != 0);
+        buffer.up_position(common_header_len).unwrap();
+        event.commit_flag = buffer.get_uint8().unwrap() != 0;
 
         let bs = buffer.get_data_len(Self::ENCODED_SID_LENGTH as usize);
 
@@ -1176,7 +1170,7 @@ pub struct IgnorableLogEvent {
 }
 
 impl IgnorableLogEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> IgnorableLogEvent {
+    pub fn from(header: &LogHeader, _buffer: &mut LogBuffer, _description_event: &FormatDescriptionLogEvent) -> IgnorableLogEvent {
         let mut event = IgnorableLogEvent {
             event: Event::new()
         };
@@ -1206,7 +1200,7 @@ impl IncidentLogEvent {
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[header.kind - 1] as usize;
 
-        buffer.up_position(common_header_len);
+        buffer.up_position(common_header_len).unwrap();
 
         let incident_number = buffer.get_uint16().ok()? as usize;
 
@@ -1216,7 +1210,7 @@ impl IncidentLogEvent {
             return Option::Some(event);
         }
         event.incident = incident_number;
-        buffer.up_position(common_header_len + post_header_len);
+        buffer.up_position(common_header_len + post_header_len).unwrap();
         event.message = buffer.get_string().ok()?;
         Option::Some(event)
     }
@@ -1249,7 +1243,7 @@ impl InvarianceLogEvent {
         };
         event.event.header = header.clone();
 
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[INTVAR_EVENT - 1] as usize + Self::I_TYPE_OFFSET);
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[INTVAR_EVENT - 1] as usize + Self::I_TYPE_OFFSET).unwrap();
         event.kind = buffer.get_int8().ok()?;
         event.value = buffer.get_int64().ok()?;
 
@@ -1320,13 +1314,13 @@ impl LoadLogEvent {
     }
 
     pub fn copy_log_event(&mut self, buffer: &mut LogBuffer, body_offset: usize, description_event: &FormatDescriptionLogEvent) {
-        buffer.up_position(description_event.common_header_len + Self::L_EXEC_TIME_OFFSET);
+        buffer.up_position(description_event.common_header_len + Self::L_EXEC_TIME_OFFSET).unwrap();
         self.exec_time = buffer.get_uint32().unwrap();
         self.skip_lines = buffer.get_uint32().unwrap();
         let table_name_len = buffer.get_uint8().unwrap();
         let db_len = buffer.get_uint8().unwrap();
         self.num_fields = buffer.get_uint32().unwrap();
-        buffer.up_position(body_offset);
+        buffer.up_position(body_offset).unwrap();
 
         if self.event.header.kind != LOAD_EVENT {
             self.field_term = buffer.get_string().unwrap();
@@ -1360,7 +1354,7 @@ impl LoadLogEvent {
             found += 1;
         }
         self.frame = buffer.get_string_pos(found).unwrap();
-        buffer.forward(1);
+        buffer.forward(1).unwrap();
     }
 }
 
@@ -1614,7 +1608,7 @@ impl QueryLogEvent {
         }
 
         let mut data_len = buffer.limit() - (common_header_len + post_header_len);
-        buffer.up_position(common_header_len + QueryLogEvent::Q_AUTO_INCREMENT as usize);
+        buffer.up_position(common_header_len + QueryLogEvent::Q_AUTO_INCREMENT as usize).unwrap();
         event.session_id = buffer.get_uint32().unwrap(); // Q_THREAD_ID_OFFSET
         event.exec_time = buffer.get_uint32().unwrap();  // Q_EXEC_TIME_OFFSET
         let db_len = buffer.get_uint8().unwrap() as usize;
@@ -1647,11 +1641,11 @@ impl QueryLogEvent {
         let start = common_header_len + post_header_len;
         let limit = buffer.limit();
         let end = start + status_vars_len;
-        buffer.up_position(start);
-        buffer.new_limit(end);
+        buffer.up_position(start).unwrap();
+        buffer.new_limit(end).unwrap();
         QueryLogEvent::unpack_variables(&mut event, buffer, end);
-        buffer.up_position(end);
-        buffer.new_limit(limit);
+        buffer.up_position(end).unwrap();
+        buffer.new_limit(limit).unwrap();
 
         let query_len = data_len - data_len - db_len - 1;
         event.dbname = buffer.get_fix_string_len(db_len + 1);
@@ -1728,22 +1722,22 @@ impl QueryLogEvent {
                     }
                 }
                 QueryLogEvent::Q_EXPLICIT_DEFAULTS_FOR_TIMESTAMP => {
-                    buffer.forward(1);
+                    buffer.forward(1).unwrap();
                 }
 
                 QueryLogEvent::Q_DDL_LOGGED_WITH_XID =>
                     event.ddl_xid = buffer.get_uint64().unwrap(),
                 QueryLogEvent::Q_DEFAULT_COLLATION_FOR_UTF8MB4 =>
                     {
-                        buffer.forward(2);
+                        buffer.forward(2).unwrap();
                     }
                 QueryLogEvent::Q_SQL_REQUIRE_PRIMARY_KEY =>
                     {
-                        buffer.forward(1);
+                        buffer.forward(1).unwrap();
                     }
                 QueryLogEvent::Q_HRNOW =>
                     {
-                        buffer.forward(3);
+                        buffer.forward(3).unwrap();
                     }
                 _ =>
                     println!("Query_log_event has unknown status vars (first has code: {}), skipping the rest of them", code)
@@ -1855,7 +1849,7 @@ impl RandLogEvent {
             seed2: 0,
         };
         event.event.header = header.clone();
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[RAND_EVENT - 1] as usize);
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[RAND_EVENT - 1] as usize).unwrap();
         event.seed1 = buffer.get_int64().ok()?;
         event.seed2 = buffer.get_int64().ok()?;
         Option::Some(event)
@@ -1885,7 +1879,7 @@ impl RotateLogEvent {
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[ROTATE_EVENT - 1] as usize;
 
-        buffer.up_position(common_header_len + Self::R_POS_OFFSET);
+        buffer.up_position(common_header_len + Self::R_POS_OFFSET).unwrap();
 
         event.position = if post_header_len != 0 { buffer.get_int64().ok()? } else { 4 };
 
@@ -1896,7 +1890,7 @@ impl RotateLogEvent {
             filename_len = Self::FN_REFLEN - 1;
         }
 
-        buffer.up_position(filename_offset);
+        buffer.up_position(filename_offset).unwrap();
         event.file_name = buffer.get_fix_string_len(filename_len);
         Option::Some(event)
     }
@@ -1933,7 +1927,7 @@ impl RowsLogEvent {
     const RW_MAPID_OFFSET: u8 = 0;
     const RW_FLAGS_OFFSET: u8 = 6;
     const RW_VHLEN_OFFSET: u8 = 8;
-    const RW_V_TAG_LEN: u8 = 1;
+    const _RW_V_TAG_LEN: u8 = 1;
     const RW_V_EXTRAINFO_TAG: u8 = 0;
 
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent, partial: bool) -> Self {
@@ -1953,7 +1947,7 @@ impl RowsLogEvent {
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[header.kind - 1];
         let mut header_len = 0;
-        buffer.up_position(common_header_len + RowsLogEvent::RW_MAPID_OFFSET as usize);
+        buffer.up_position(common_header_len + RowsLogEvent::RW_MAPID_OFFSET as usize).unwrap();
 
         if post_header_len == 6 {
             /*
@@ -1978,7 +1972,7 @@ impl RowsLogEvent {
                 i += 1;
                 match result {
                     RowsLogEvent::RW_V_EXTRAINFO_TAG => {
-                        buffer.up_position(i + EXTRA_ROW_INFO_LEN_OFFSET as usize);
+                        buffer.up_position(i + EXTRA_ROW_INFO_LEN_OFFSET as usize).unwrap();
                         let check_len = buffer.get_uint8().unwrap();
                         let val = check_len - EXTRA_ROW_INFO_HDR_BYTES;// EXTRA_ROW_INFO_LEN_OFFSET
                         assert_eq!(buffer.get_uint8().unwrap(), val);
@@ -1993,7 +1987,7 @@ impl RowsLogEvent {
             }
         }
 
-        buffer.up_position(common_header_len + post_header_len as usize + header_len as usize);
+        buffer.up_position(common_header_len + post_header_len as usize + header_len as usize).unwrap();
         event.column_len = buffer.get_packed_i64() as usize;
         event.partial = partial;
         event.columns = buffer.get_bit_map(event.column_len);
@@ -2092,7 +2086,7 @@ impl StartLogEventV3 {
             server_version: None
         };
         event.event.header = header.clone();
-        buffer.up_position(description_event.common_header_len);
+        buffer.up_position(description_event.common_header_len).unwrap();
         event.binlog_version = buffer.get_uint16().ok()?;
         event.server_version = Option::Some(buffer.get_fix_string_len(Self::ST_SERVER_VER_LEN)?);
         Option::Some(event)
@@ -2177,7 +2171,7 @@ impl TableMapLogEvent {
         };
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[event.event.header.kind - 1] as usize;
-        buffer.up_position(common_header_len + TableMapLogEvent::TM_MAPID_OFFSET);
+        buffer.up_position(common_header_len + TableMapLogEvent::TM_MAPID_OFFSET).unwrap();
 
 
         if post_header_len == 6 {
@@ -2187,11 +2181,11 @@ impl TableMapLogEvent {
         }
 
 
-        buffer.up_position(common_header_len + post_header_len);
+        buffer.up_position(common_header_len + post_header_len).unwrap();
         event.dbname = buffer.get_string().unwrap();
-        buffer.forward(1);
+        buffer.forward(1).unwrap();
         event.tblname = buffer.get_string().unwrap();
-        buffer.forward(1);
+        buffer.forward(1).unwrap();
         event.column_cnt = buffer.get_packed_i64();
         let mut i = 0;
         while i < event.column_cnt {
@@ -2289,7 +2283,7 @@ impl TableMapLogEvent {
     fn decode_fields(event: &mut TableMapLogEvent, buffer: &mut LogBuffer, len: usize) {
         let limit = buffer.limit();
         let new_limit = len + buffer.position();
-        buffer.new_limit(new_limit);
+        buffer.new_limit(new_limit).unwrap();
 
         let mut i = 0;
         while i < event.column_cnt as usize {
@@ -2318,7 +2312,7 @@ impl TableMapLogEvent {
                 MYSQL_TYPE_STRING |
                 MYSQL_TYPE_NEWDECIMAL => {
                     let mut x = (buffer.get_uint8().unwrap() as u16) << 8;
-                    x += (buffer.get_uint8().unwrap() as u16);
+                    x += buffer.get_uint8().unwrap() as u16;
                     info.meta = x;
                 }
                 MYSQL_TYPE_BIT => {
@@ -2333,7 +2327,7 @@ impl TableMapLogEvent {
             }
             i += 1;
         }
-        buffer.new_limit(limit);
+        buffer.new_limit(limit).unwrap();
     }
 
     fn parse_signedness(event: &mut TableMapLogEvent, buffer: &mut LogBuffer, length: usize) {

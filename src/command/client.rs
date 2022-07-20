@@ -43,13 +43,8 @@ impl<'a, 'b : 'a> Packet<'b> for AuthSwitchResponsePacket<'a> {
     }
 }
 
-const BINLOG_DUMP_NON_BLOCK: u32 = 1;
-const BINLOG_SEND_ANNOTATE_ROWS_EVENT: u32 = 2;
-
 pub struct BinlogDumpCommandPacket<'a> {
     command: u8,
-    binlog_dump_non_block: u32,
-    binlog_send_annotate_rows_event: u32,
     binlog_position: u32,
     slave_server_id: u32,
     binlog_file_name: &'a str,
@@ -72,11 +67,12 @@ pub struct BinlogDumpCommandPacket<'a> {
  * </pre>
  */
 impl<'a> BinlogDumpCommandPacket<'a> {
+    const BINLOG_DUMP_NON_BLOCK: u8 = 1;
+    const BINLOG_SEND_ANNOTATE_ROWS_EVENT: u8 = 2;
     pub fn from(binlog_file_name: &'a str, binlog_position: u32, slave_server_id: u32) -> Self {
         Self {
             command: 0x12,
-            binlog_dump_non_block: BINLOG_DUMP_NON_BLOCK,
-            binlog_send_annotate_rows_event: BINLOG_SEND_ANNOTATE_ROWS_EVENT,
+
             binlog_position,
             slave_server_id,
             binlog_file_name,
@@ -95,7 +91,7 @@ impl<'a, 'b: 'a> Packet<'b> for BinlogDumpCommandPacket<'a> {
         out.push(self.command);
         write_unsigned_4byte_little_endian(self.binlog_position, &mut out);
         let mut binlog_flags: u8 = 0;
-        binlog_flags |= BINLOG_SEND_ANNOTATE_ROWS_EVENT as u8;
+        binlog_flags |= Self::BINLOG_SEND_ANNOTATE_ROWS_EVENT;
         out.push(binlog_flags);
         out.push(0x00);
         write_unsigned_4byte_little_endian(self.slave_server_id, &mut out);
@@ -109,7 +105,7 @@ impl<'a, 'b: 'a> Packet<'b> for BinlogDumpCommandPacket<'a> {
     }
 }
 
-impl <'a>Display for BinlogDumpCommandPacket<'a> {
+impl<'a> Display for BinlogDumpCommandPacket<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "binlog_file_name: {}, binlog_position:{}, slave_server_id:{}", self.binlog_file_name, self.binlog_position, self.slave_server_id)
     }
@@ -373,7 +369,7 @@ impl<'a> SemiAckCommandPacket<'a> {
 }
 
 impl<'a, 'b: 'a> Packet<'b> for SemiAckCommandPacket<'a> {
-    fn from_bytes(&mut self, buf: &'b [u8]) {
+    fn from_bytes(&mut self, _buf: &'b [u8]) {
         todo!()
     }
 

@@ -1,19 +1,18 @@
-use std::fmt::{Error, format};
 use std::mem;
 use std::str::FromStr;
 use bigdecimal::BigDecimal;
 use bit_set::BitSet;
 use encoding::{DecoderTrap, Encoding};
 use encoding::all::ISO_8859_1;
-use encoding::DecoderTrap::Strict;
+// use encoding::DecoderTrap::Strict;
 use crate::channel::TcpSocketChannel;
 
 const NULL_LENGTH: i64 = -1;
 const DIG_PER_DEC1: i32 = 9;
 const DIG_BASE: i32 = 1000000000;
 const DIG_MAX: i32 = DIG_BASE - 1;
-const dig2bytes: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
-const powers10: [usize; 10] = [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000];
+const DIG2BYTES: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
+const POWERS10: [usize; 10] = [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000];
 const DIG_PER_INT32: usize = 9;
 const SIZE_OF_INT32: usize = 4;
 
@@ -765,48 +764,8 @@ impl LogBuffer {
             let i4 = self.buffer[position + 4];
             let i5 = self.buffer[position + 5];
             let i6 = self.buffer[position + 6];
-            return return Result::Ok((i as i64 | (i1 as i64) << 8 | (i2 as i64) << 16 | (i3 as i64) << 24
-                | (i4 as i64) << 32 | (i5 as i64) << 40 | (i6 as i64) << 48) as i64);;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
+            return Result::Ok((i as i64 | (i1 as i64) << 8 | (i2 as i64) << 16 | (i3 as i64) << 24
+                | (i4 as i64) << 32 | (i5 as i64) << 40 | (i6 as i64) << 48) as i64);
         }
         return Result::Err(String::from(format!("limit excceed: {}", pos)));
     }
@@ -827,48 +786,8 @@ impl LogBuffer {
             self.position += 1;
             let i6 = self.buffer[self.position];
             self.position += 1;
-            return return Result::Ok((i as i64 | (i1 as i64) << 8 | (i2 as i64) << 16 | (i3 as i64) << 24
-                | (i4 as i64) << 32 | (i5 as i64) << 40 | (i6 as i64) << 48) as i64);;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
+            return Result::Ok((i as i64 | (i1 as i64) << 8 | (i2 as i64) << 16 | (i3 as i64) << 24
+                | (i4 as i64) << 32 | (i5 as i64) << 40 | (i6 as i64) << 48) as i64);
         }
         return Result::Err(String::from(format!("limit excceed: {}", self.position - self.origin)));
     }
@@ -921,49 +840,9 @@ impl LogBuffer {
             let i4 = self.buffer[position + 4];
             let i5 = self.buffer[position + 5];
             let i6 = self.buffer[position + 6];
-            return return Result::Ok((i6 as i64 | (i5 as i64) << 8 | (i4 as i64) << 16
+            return  Result::Ok((i6 as i64 | (i5 as i64) << 8 | (i4 as i64) << 16
                 | (i3 as i64) << 24 | (i2 as i64) < 32 | (i1 as i64) << 40 | (i as i64) << 48)
-                as i64);;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
-            ;
+                as i64);
         }
         return Result::Err(String::from(format!("limit excceed: {}", pos)));
     }
@@ -1328,7 +1207,7 @@ impl LogBuffer {
     }
 
     pub fn get_string_pos(&self, pos: usize) -> Result<Option<String>, String> {
-        if pos >= self.limit || pos < 0 {
+        if pos >= self.limit {
             return Result::Err(format!("limit excceed: {} ", pos));
         }
         let len = 0xff & self.buffer[self.origin + pos] as usize;
@@ -1378,13 +1257,14 @@ impl LogBuffer {
         let intg0x = intg - intg0 * DIG_PER_INT32;
         let frac0x = frac - frac0 * DIG_PER_INT32;
 
-        let binSize = intg0 * SIZE_OF_INT32 + (dig2bytes[intg0x] as usize) + frac0 * SIZE_OF_INT32 + (dig2bytes[frac0x] as usize);
-        let limit = if pos < 0 {
-            pos
-        } else {
-            pos + binSize
-        };
-        if pos + binSize > self.limit {
+        let bin_size = intg0 * SIZE_OF_INT32 + (DIG2BYTES[intg0x] as usize) + frac0 * SIZE_OF_INT32 + (DIG2BYTES[frac0x] as usize);
+        // let limit = if pos < 0 {
+        //     pos
+        // } else {
+        //     pos + bin_size
+        // };
+        let limit = pos + bin_size;
+        if pos + bin_size > self.limit {
             return Result::Err(format!("limit excceed: {}", limit));
         }
         return self.get_decimal0(self.origin + pos, intg, frac, intg0, frac0, intg0x, frac0x);
@@ -1398,13 +1278,13 @@ impl LogBuffer {
         let intg0x = intg - intg0 * DIG_PER_INT32;
         let frac0x = frac - frac0 * DIG_PER_INT32;
 
-        let binSize = intg0 * SIZE_OF_INT32 + dig2bytes[intg0x] + frac0 * SIZE_OF_INT32 + dig2bytes[frac0x];
+        let bin_size = intg0 * SIZE_OF_INT32 + DIG2BYTES[intg0x] + frac0 * SIZE_OF_INT32 + DIG2BYTES[frac0x];
 
-        if self.position + binSize > self.origin + self.limit {
-            return Result::Err(format!("limit excceed: {}", (self.position + binSize - self.origin)));
+        if self.position + bin_size > self.origin + self.limit {
+            return Result::Err(format!("limit excceed: {}", (self.position + bin_size - self.origin)));
         }
         let decimal = self.get_decimal0(self.position, intg, frac, intg0, frac0, intg0x, frac0x);
-        self.position += binSize;
+        self.position += bin_size;
         decimal
     }
 
@@ -1416,7 +1296,7 @@ impl LogBuffer {
         };
 
         let mut from = begin;
-        let len = (if mask != 0 { 1 } else { 0 }) + (if intg != 0 { intg } else { 1 }) + (if frac != 0 { 1 } else { 0 });
+        // let len = (if mask != 0 { 1 } else { 0 }) + (if intg != 0 { intg } else { 1 }) + (if frac != 0 { 1 } else { 0 });
         let mut buf = vec![];
         if mask != 0 {
             buf.push('-')
@@ -1426,7 +1306,7 @@ impl LogBuffer {
         d_copy.clone()[begin] ^= 0x80;
         let mut mark = buf.len();
         if intg0x != 0 {
-            let i = dig2bytes[intg0x] as usize;
+            let i = DIG2BYTES[intg0x] as usize;
             let mut x = 0;
             match i {
                 1 => x = d_copy[from] as i32,
@@ -1438,14 +1318,14 @@ impl LogBuffer {
             from += i;
             x ^= mask;
 
-            if x < 0 || x >= powers10[intg0x + 1] as i32 {
-                return Result::Err(format!("bad format, x exceed: {}", powers10[intg0x + 1]));
+            if x < 0 || x >= POWERS10[intg0x + 1] as i32 {
+                return Result::Err(format!("bad format, x exceed: {}", POWERS10[intg0x + 1]));
             }
 
             if x != 0  /* !digit || x != 0 */ {
                 let mut j = intg0x;
                 while j > 0 {
-                    let divisor = powers10[j - 1] as i32;
+                    let divisor = POWERS10[j - 1] as i32;
                     let y = x / divisor;
                     if mark < buf.len() || y != 0 {
                         buf.push(('0' as u8 + y as u8) as char)
@@ -1468,7 +1348,7 @@ impl LogBuffer {
                 if mark < buf.len() {
                     let mut i = DIG_PER_DEC1;
                     while i > 0 {
-                        let divisor = powers10[(i - 1) as usize];
+                        let divisor = POWERS10[(i - 1) as usize];
                         let y = (x / divisor as i32) as u8;
                         buf.push(('0' as u8 + y) as char);
                         x -= y as i32 * divisor as i32;
@@ -1477,7 +1357,7 @@ impl LogBuffer {
                 } else {
                     let mut i = DIG_PER_DEC1;
                     while i > 0 {
-                        let divisor = powers10[(i - 1) as usize];
+                        let divisor = POWERS10[(i - 1) as usize];
                         let y = x / divisor as i32;
                         if mark < buf.len() || y != 0 {
                             buf.push(('0' as u8 + y as u8) as char)
@@ -1517,7 +1397,7 @@ impl LogBuffer {
                 if x != 0 {
                     let mut i = DIG_PER_DEC1;
                     while i > 0 {
-                        let divisor = powers10[(i - 1) as usize];
+                        let divisor = POWERS10[(i - 1) as usize];
                         let y = (x / divisor as i32) as u8;
                         buf.push(('0' as u8 + y) as char);
                         x -= y as i32 * divisor as i32;
@@ -1534,7 +1414,7 @@ impl LogBuffer {
             }
 
             if frac0x != 0 {
-                let i = dig2bytes[frac0x];
+                let i = DIG2BYTES[frac0x];
                 let mut x = 0;
                 match i {
                     1 => x = d_copy.clone()[from].clone() as i32,
@@ -1546,14 +1426,14 @@ impl LogBuffer {
                 x ^= mask;
                 if x != 0 {
                     let big = DIG_PER_DEC1 - frac0x as i32;
-                    x *= powers10[big as usize] as i32;
+                    x *= POWERS10[big as usize] as i32;
                     if x < 0 || x > DIG_MAX {
                         return Result::Err(format!("bad format, x exceed: {}", DIG_MAX));
                     }
 
                     let mut j = DIG_PER_DEC1;
                     while j > big {
-                        let divisor = powers10[(j - 1) as usize];
+                        let divisor = POWERS10[(j - 1) as usize];
                         let y = x / divisor as i32;
                         buf.push(('0' as u8 + y as u8) as char);
                         x -= y * divisor as i32;
@@ -1612,24 +1492,25 @@ impl LogBuffer {
 
     pub fn get_bit_map_pos(&self, pos: usize, len: usize) -> BitSet {
         let mut set = BitSet::new();
-        self.fill_bit_map_pos_map(&mut set, pos, len);
+        self.fill_bit_map_pos_map(&mut set, pos, len).unwrap();
         set
     }
 
     pub fn get_bit_map(&mut self, len: usize) -> BitSet {
         let mut set = BitSet::new();
-        self.fill_bitmap_map(&mut set, len);
+        self.fill_bitmap_map(&mut set, len).unwrap();
+
         set
     }
 
-    pub fn fillOutputPos(&self, pos: usize, len: usize) -> Result<Box<[u8]>, String> {
+    pub fn fill_output_pos(&self, pos: usize, len: usize) -> Result<Box<[u8]>, String> {
         if pos + len > self.limit {
             return Result::Err(format!("limit excceed: {}", (pos + len)));
         }
         let x = &self.buffer.clone()[self.origin + pos..len];
         Result::Ok(Box::from(x))
     }
-    pub fn fillOutput(&self, len: usize) -> Result<Box<[u8]>, String> {
+    pub fn fill_output(&self, len: usize) -> Result<Box<[u8]>, String> {
         if self.position + len > self.origin + self.limit {
             return Result::Err(format!("limit excceed: {}", (self.position + len - self.origin)));
         }
@@ -1637,7 +1518,7 @@ impl LogBuffer {
         Result::Ok(Box::from(x))
     }
 
-    pub fn fillOutBytesPos(&self, pos: usize, dest: &mut Vec<u8>, dest_pos: usize, len: usize) -> Result<(), String> {
+    pub fn fill_out_bytes_pos(&self, pos: usize, dest: &mut Vec<u8>, dest_pos: usize, len: usize) -> Result<(), String> {
         if pos + len > self.limit {
             return Result::Err(format!("limit excceed: {}", (pos + len)));
         }
@@ -1647,7 +1528,7 @@ impl LogBuffer {
         Result::Ok(())
     }
 
-    pub fn fillOutBytes(&mut self, dest: &mut Vec<u8>, dest_pos: usize, len: usize) -> Result<(), String> {
+    pub fn fill_out_bytes(&mut self, dest: &mut Vec<u8>, dest_pos: usize, len: usize) -> Result<(), String> {
         if self.position + len > self.limit + self.origin {
             return Result::Err(format!("limit excceed: {}", (self.position + len - self.origin)));
         }
@@ -1660,13 +1541,13 @@ impl LogBuffer {
 
     pub fn get_data_pos_len(&self, pos: usize, len: usize) -> Box<[u8]> {
         let mut data = vec![];
-        self.fillOutBytesPos(pos, &mut data, 0, len).unwrap();
+        self.fill_out_bytes_pos(pos, &mut data, 0, len).unwrap();
         Box::from(data)
     }
 
     pub fn get_data_len(&mut self, len: usize) -> Box<[u8]> {
         let mut data = vec![];
-        self.fillOutBytes(&mut data, 0, len).unwrap();
+        self.fill_out_bytes(&mut data, 0, len).unwrap();
         Box::from(data)
     }
     pub fn get_data(&mut self) -> Box<[u8]> {
@@ -1679,16 +1560,16 @@ impl LogBuffer {
             let end = self.origin + self.limit;
             let buf = self.buffer.clone();
             let mut dump = String::new();
-            let i = (&buf[begin] >> 4);
-            let i1 = (&buf[begin] & 0xf);
-            dump.push_str((i.to_string().as_str()));
-            dump.push_str((i1.to_string().as_str()));
+            let i = &buf[begin] >> 4;
+            let i1 = &buf[begin] & 0xf;
+            dump.push_str(i.to_string().as_str());
+            dump.push_str(i1.to_string().as_str());
             let mut i = begin + 1;
             while i < end {
-                let j = (&buf[begin] >> 4);
-                let j1 = (&buf[begin] & 0xf);
-                dump.push_str((j.to_string().as_str()));
-                dump.push_str((j1.to_string().as_str()));
+                let j = &buf[begin] >> 4;
+                let j1 = &buf[begin] & 0xf;
+                dump.push_str(j.to_string().as_str());
+                dump.push_str(j1.to_string().as_str());
                 i += 1;
             }
             return dump;
@@ -1703,16 +1584,16 @@ impl LogBuffer {
 
             let buf = self.buffer.clone();
             let mut dump = String::new();
-            let i = (&buf[begin] >> 4);
-            let i1 = (&buf[begin] & 0xf);
-            dump.push_str((i.to_string().as_str()));
-            dump.push_str((i1.to_string().as_str()));
+            let i = &buf[begin] >> 4;
+            let i1 = &buf[begin] & 0xf;
+            dump.push_str(i.to_string().as_str());
+            dump.push_str(i1.to_string().as_str());
             let mut i = begin + 1;
             while i < end {
-                let j = (&buf[begin] >> 4);
-                let j1 = (&buf[begin] & 0xf);
-                dump.push_str((j.to_string().as_str()));
-                dump.push_str((j1.to_string().as_str()));
+                let j = &buf[begin] >> 4;
+                let j1 = &buf[begin] & 0xf;
+                dump.push_str(j.to_string().as_str());
+                dump.push_str(j1.to_string().as_str());
                 i += 1;
             }
             return dump;
@@ -1724,17 +1605,7 @@ impl LogBuffer {
     }
 }
 
-const DEFAULT_INITIAL_CAPACITY: usize = 8192;
-const DEFAULT_GROWTH_FACTOR: f32 = 2.0;
-const BIN_LOG_HEADER_SIZE: u32 = 4;
-const MASTER_HEARTBEAT_PERIOD_SECONDS: u32 = 15;
-const READ_TIMEOUT_MILLISECONDS: u32 = (MASTER_HEARTBEAT_PERIOD_SECONDS + 10) * 1000;
-const COM_BINLOG_DUMP: u32 = 18;
-const NET_HEADER_SIZE: usize = 4;
-const SQLSTATE_LENGTH: usize = 5;
-const PACKET_LEN_OFFSET: usize = 0;
-const PACKET_SEQ_OFFSET: usize = 3;
-const MAX_PACKET_LENGTH: usize = (256 * 256 * 256 - 1);
+
 
 struct DirectLogFetcher {
     log_buffer: LogBuffer,
@@ -1744,6 +1615,17 @@ struct DirectLogFetcher {
 }
 
 impl DirectLogFetcher {
+    const DEFAULT_INITIAL_CAPACITY: usize = 8192;
+    const DEFAULT_GROWTH_FACTOR: f32 = 2.0;
+    const BIN_LOG_HEADER_SIZE: u32 = 4;
+    const MASTER_HEARTBEAT_PERIOD_SECONDS: u32 = 15;
+    const READ_TIMEOUT_MILLISECONDS: u32 = (Self::MASTER_HEARTBEAT_PERIOD_SECONDS + 10) * 1000;
+    const COM_BINLOG_DUMP: u32 = 18;
+    const NET_HEADER_SIZE: usize = 4;
+    const SQLSTATE_LENGTH: usize = 5;
+    const PACKET_LEN_OFFSET: usize = 0;
+    const PACKET_SEQ_OFFSET: usize = 3;
+    const MAX_PACKET_LENGTH: usize = 256 * 256 * 256 - 1;
     pub fn new() -> Self {
         Self {
             log_buffer: LogBuffer {
@@ -1753,14 +1635,14 @@ impl DirectLogFetcher {
                 position: 0,
                 seminal: 0,
             },
-            factor: DEFAULT_GROWTH_FACTOR,
+            factor: Self::DEFAULT_GROWTH_FACTOR,
             channel:  Option::None,
             isem: false,
         }
     }
 
     pub fn from_init_capacity(init_capacity: u32) -> DirectLogFetcher {
-        DirectLogFetcher::from_init_factor(init_capacity, DEFAULT_GROWTH_FACTOR)
+        DirectLogFetcher::from_init_factor(init_capacity, Self::DEFAULT_GROWTH_FACTOR)
     }
 
     pub fn from_init_factor(init_capacity: u32, growth_factor: f32) -> DirectLogFetcher {
@@ -1783,24 +1665,24 @@ impl DirectLogFetcher {
     }
 
     pub fn fetch(&mut self) -> Result<bool, String> {
-        if !self.fetch0(0, NET_HEADER_SIZE) {
+        if !self.fetch0(0, Self::NET_HEADER_SIZE) {
             println!("Reached end of input stream while fetching header");
             return Result::Ok(false);
         }
 
-        let mut net_len = self.log_buffer.get_uint24_pos(PACKET_LEN_OFFSET)?;
-        let mut net_num = self.log_buffer.get_uint8_pos(PACKET_LEN_OFFSET)?;
-        if !self.fetch0(NET_HEADER_SIZE, net_len as usize) {
+        let mut net_len = self.log_buffer.get_uint24_pos(Self::PACKET_LEN_OFFSET)?;
+        let mut net_num = self.log_buffer.get_uint8_pos(Self::PACKET_LEN_OFFSET)?;
+        if !self.fetch0(Self::NET_HEADER_SIZE, net_len as usize) {
             println!("{}",format!("Reached end of input stream: packet # {}, len = {}", net_num, net_len));
             return  Result::Ok(false);
         }
 
-        let mark = self.log_buffer.get_uint8_pos(NET_HEADER_SIZE)?;
+        let mark = self.log_buffer.get_uint8_pos(Self::NET_HEADER_SIZE)?;
         if mark != 0 {
             if mark == 255 {
-                self.log_buffer.position = NET_HEADER_SIZE + 1;
+                self.log_buffer.position = Self::NET_HEADER_SIZE + 1;
                 let error = self.log_buffer.get_int16()?;
-                let sql_state = self.log_buffer.forward(1)?.get_fix_string_len(SQLSTATE_LENGTH).unwrap();
+                let sql_state = self.log_buffer.forward(1)?.get_fix_string_len(Self::SQLSTATE_LENGTH).unwrap();
                 let err_msg = self.log_buffer.get_fix_string_len(self.log_buffer.limit - self.log_buffer.position).unwrap();
                 return Result::Err(format!("Received error packet: errno = {}, sqlstate = {} errmsg = {}", error, sql_state, err_msg));
             } else if 254 == mark {
@@ -1812,18 +1694,18 @@ impl DirectLogFetcher {
         }
 
         if self.isem {
-            let semimark = self.log_buffer.get_uint8_pos(NET_HEADER_SIZE + 1)?;
-            let semival = self.log_buffer.get_uint8_pos(NET_HEADER_SIZE + 1)?;
+            let semimark = self.log_buffer.get_uint8_pos(Self::NET_HEADER_SIZE + 1)?;
+            let semival = self.log_buffer.get_uint8_pos(Self::NET_HEADER_SIZE + 1)?;
             self.log_buffer.seminal = semival;
         }
 
-        while net_len == MAX_PACKET_LENGTH as u32{
-            if !self.fetch0(0, MAX_PACKET_LENGTH) {
+        while net_len == Self::MAX_PACKET_LENGTH as u32{
+            if !self.fetch0(0, Self::MAX_PACKET_LENGTH) {
                 println!("Reached end of input stream while fetching header");
                 return Result::Ok(false);
             }
-            net_len = self.log_buffer.get_uint24_pos(PACKET_LEN_OFFSET)?;
-            net_num = self.log_buffer.get_uint8_pos(PACKET_SEQ_OFFSET)?;
+            net_len = self.log_buffer.get_uint24_pos(Self::PACKET_LEN_OFFSET)?;
+            net_num = self.log_buffer.get_uint8_pos(Self::PACKET_SEQ_OFFSET)?;
 
             if !self.fetch0(self.log_buffer.limit, net_len as usize) {
                 println!("Reached end of input stream: packet # {}, len: {}", net_num, net_len);
@@ -1831,9 +1713,9 @@ impl DirectLogFetcher {
             }
         }
         if self.isem {
-            self.log_buffer.origin = NET_HEADER_SIZE + 3;
+            self.log_buffer.origin = Self::NET_HEADER_SIZE + 3;
         } else {
-            self.log_buffer.origin = NET_HEADER_SIZE + 1;
+            self.log_buffer.origin = Self::NET_HEADER_SIZE + 1;
         }
         self.log_buffer.position = self.log_buffer.origin;
         self.log_buffer.limit -= self.log_buffer.origin;
@@ -1841,11 +1723,19 @@ impl DirectLogFetcher {
     }
 
     fn fetch0(&mut self, off: usize, len: usize) -> bool{
-        self.channel.as_mut().unwrap().read_offset_len(&mut self.log_buffer.buffer, off, len);
-        if self.log_buffer.limit < off + len {
-            self.log_buffer.limit = off + len;
+        let result = self.channel.as_mut().unwrap().read_offset_len(&mut self.log_buffer.buffer, off, len);
+
+        match result {
+            Ok(size) => {
+                if self.log_buffer.limit < off + size {
+                    self.log_buffer.limit = off + size;
+                }
+                return true
+            }
+            Err(e) => {
+                return false
+            }
         }
-        true
     }
 }
 
