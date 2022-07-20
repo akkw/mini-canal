@@ -1,16 +1,18 @@
 use std::collections::HashMap;
+use std::env::var;
 use std::f32::consts::E;
 use std::fmt::{Display, Formatter, write};
 use std::iter::Map;
 use std::mem::take;
 use std::ops::Add;
 use std::os::unix::raw::gid_t;
+use bigdecimal::BigDecimal;
 use bit_set::BitSet;
 use chrono::format::parse;
 use num::BigInt;
 use uuid::Uuid;
 use crate::command::{get_i64, HeaderPacket};
-use crate::command::event::LogEvent::FormatDescriptionLog;
+use crate::command::event::LogEvent::{FormatDescriptionLog, XidLog};
 use crate::instance::log_buffer::LogBuffer;
 
 
@@ -872,7 +874,6 @@ impl FormatDescriptionLogEvent {
     pub const CHECKSUM_VERSION_SPLIT: [u8; 3] = [5, 6, 1];
     pub const CHECKSUM_VERSION_PRODUCT: u32 = ((FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[0] as u32 * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[1] as u32) * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[2] as u32) as u32;
     #[allow(arithmetic_overflow)]
-
     pub fn from(&mut self, header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
         buffer.up_position(description_event.common_header_len);
         let mut event = FormatDescriptionLogEvent {
@@ -2084,12 +2085,11 @@ impl StartLogEventV3 {
     const ST_SERVER_VER_OFFSET: usize = 2;
 
 
-
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = StartLogEventV3 {
             event: Event::new(),
             binlog_version: 0,
-            server_version: None
+            server_version: None,
         };
         event.event.header = header.clone();
         buffer.up_position(description_event.common_header_len);
@@ -2098,11 +2098,11 @@ impl StartLogEventV3 {
         Option::Some(event)
     }
 
-    pub fn from_none() -> Self{
+    pub fn from_none() -> Self {
         let mut event = StartLogEventV3 {
             event: Event::new(),
             binlog_version: 0,
-            server_version: None
+            server_version: None,
         };
         event.event.header = LogHeader::from_kind(START_EVENT_V3);
         event
@@ -2132,7 +2132,6 @@ impl StopLogEvent {
         event.event.header = header.clone();
         Option::Some(event)
     }
-
 }
 
 pub struct TableMapLogEvent {
@@ -2669,24 +2668,292 @@ impl Display for ColumnInfo {
     }
 }
 
-pub struct TransactionContextLogEvent {}
+pub struct TransactionContextLogEvent {
+    event: Event,
+}
 
-pub struct TransactionPayloadLogEvent {}
+impl TransactionContextLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = TransactionContextLogEvent {
+            event: Event::new(),
+        };
+        event.event.header = header.clone();
+        Option::Some(event)
+    }
+}
 
-pub struct UnknownLogEvent {}
+pub struct TransactionPayloadLogEvent {
+    event: Event,
+}
 
-pub struct UpdateRowsLogEvent {}
+impl TransactionPayloadLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = TransactionPayloadLogEvent {
+            event: Event::new(),
+        };
+        event.event.header = header.clone();
+        Option::Some(event)
+    }
+}
 
-pub struct UserVarLogEvent {}
+pub struct UnknownLogEvent {
+    event: Event,
+}
 
-pub struct ViewChangeEvent {}
+impl UnknownLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = UnknownLogEvent {
+            event: Event::new()
+        };
+        event.event.header = header.clone();
+        Option::Some(event)
+    }
+}
 
-pub struct WriteRowsLogEvent {}
+pub struct UpdateRowsLogEvent {
+    rows_log_event: RowsLogEvent,
+}
 
-pub struct XaPrepareLogEvent {}
+impl UpdateRowsLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = UpdateRowsLogEvent {
+            rows_log_event: RowsLogEvent::new(),
+        };
+        event.rows_log_event = RowsLogEvent::from(header, buffer, description_event, false);
+        Option::Some(event)
+    }
 
-pub struct XidLogEvent {}
+    pub fn from_partial(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent, partial: bool) -> Option<Self> {
+        let mut event = UpdateRowsLogEvent {
+            rows_log_event: RowsLogEvent::new(),
+        };
+        event.rows_log_event = RowsLogEvent::from(header, buffer, description_event, partial);
+        Option::Some(event)
+    }
+}
 
+pub struct UserVarLogEvent {
+    event: Event,
+    name: Option<String>,
+    value: Serializable,
+    kind: i8,
+    charset_number: u32,
+    is_null: bool,
+}
+
+impl UserVarLogEvent {
+    const STRING_RESULT: i8 = 0;
+    const REAL_RESULT: i8 = 1;
+    const INT_RESULT: i8 = 2;
+    const ROW_RESULT: i8 = 3;
+    const DECIMAL_RESULT: i8 = 4;
+    const UV_VAL_LEN_SIZE: i8 = 4;
+    const UV_VAL_IS_NULL: i8 = 1;
+    const UV_VAL_TYPE_SIZE: i8 = 1;
+    const UV_NAME_LEN_SIZE: i8 = 4;
+    const UV_CHARSET_NUMBER_SIZE: i8 = 4;
+
+
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = UserVarLogEvent {
+            event: Event::new(),
+            name: None,
+            value: Serializable::Null,
+            kind: 0,
+            charset_number: 0,
+            is_null: false,
+        };
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[USER_VAR_EVENT - 1] as usize);
+        let name_len = buffer.get_uint32().ok()? as usize;
+        event.name = buffer.get_fix_string_len(name_len);
+        event.is_null = 0 != buffer.get_int8().ok()?;
+        if event.is_null {
+            event.kind = Self::STRING_RESULT;
+            event.charset_number = 63;
+            event.value = Serializable::Null;
+        } else {
+            event.kind = buffer.get_int8().ok()?;
+            event.charset_number = buffer.get_uint32().ok()?;
+            let value_len = buffer.get_uint32().ok()?;
+            let limit = buffer.limit();
+            let position = buffer.position();
+            buffer.new_limit(position + value_len as usize);
+
+            match event.kind {
+                Self::REAL_RESULT => {
+                    event.value = Serializable::Double(buffer.get_double64())
+                }
+                Self::INT_RESULT => {
+                    if value_len == 8 {
+                        event.value = Serializable::Long(buffer.get_int64().ok()?)
+                    } else if value_len == 4 {
+                        event.value = Serializable::Long(buffer.get_uint32().ok()? as i64);
+                    } else {
+                        println!("Error INT_RESULT length: {}", value_len);
+                        return Option::None;
+                    }
+                }
+                Self::DECIMAL_RESULT => {
+                    let precision = buffer.get_int8().ok()? as usize;
+                    let scale = buffer.get_int8().ok()? as usize;
+                    event.value = Serializable::BigDecimal(buffer.get_decimal(precision, scale).unwrap());
+                }
+                Self::STRING_RESULT => {
+                    todo!()
+                }
+                Self::ROW_RESULT => {
+                    println!("ROW_RESULT is unsupported");
+                    return Option::None;
+                }
+                _ => {
+                    event.value = Serializable::Null
+                }
+            }
+            buffer.new_limit(limit);
+        }
+        Option::Some(event)
+    }
+    pub fn get_query(&self) -> String {
+        if Serializable::Null == self.value {
+            return String::from(format!("SET @{} := NULL", self.name.as_ref().unwrap()));
+        } else if self.kind == Self::STRING_RESULT {
+            return match &self.value {
+                Serializable::BigDecimal(d) => {
+                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d.to_string()))
+                }
+                Serializable::String(s) => {
+                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), s))
+                }
+                Serializable::Double(d) => {
+                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d))
+                }
+                Serializable::Long(d) => {
+                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d))
+                }
+                Serializable::Null => {
+                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), String::from("empty")))
+                }
+            };
+        } else {
+            String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), self.value))
+        }
+    }
+}
+
+pub struct ViewChangeEvent {
+    event: Event,
+}
+
+impl ViewChangeEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = ViewChangeEvent {
+            event: Event::new(),
+        };
+        event.event.header = header.clone();
+        Option::Some(event)
+    }
+}
+
+pub struct WriteRowsLogEvent {
+    event: Event,
+}
+
+impl WriteRowsLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = WriteRowsLogEvent {
+            event: Event::new()
+        };
+        event.event.header = header.clone();
+        Option::Some(event)
+    }
+}
+
+pub struct XaPrepareLogEvent {
+    event: Event,
+    one_phase: bool,
+    format_id: i32,
+    gtrid_length: i32,
+    bqual_length: i32,
+    data: Box<[u8]>,
+}
+
+impl XaPrepareLogEvent {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let mut event = XaPrepareLogEvent {
+            event: Event::new(),
+            one_phase: false,
+            format_id: 0,
+            gtrid_length: 0,
+            bqual_length: 0,
+            data: Box::from(vec![]),
+        };
+        event.event.header = header.clone();
+        let common_header_len = description_event.common_header_len;
+        let post_header_len = description_event.post_header_len[header.kind - 1] as usize;
+
+        let offset = common_header_len + post_header_len;
+
+        buffer.up_position(offet);
+
+        event.one_phase = if buffer.get_int8() == 0x00 { false } else { true };
+        event.format_id = buffer.get_int32().unwrap();
+        event.gtrid_length = buffer.get_int32().unwrap();
+        event.bqual_length = buffer.get_int32().unwrap();
+
+
+        let MY_XIDDATASIZE = 128;
+
+        if MY_XIDDATASIZE >= event.gtrid_length + event.bqual_length
+            && event.gtrid_length >= 0 && event.gtrid_length <=64
+            && event.bqual_length >= 0 &&event.bqual_length >= 64{
+            event.data = buffer.get_data_len(event.gtrid_length as usize + event.bqual_length as usize);
+        } else {
+            event.format_id = -1;
+            event.gtrid_length = 0;
+            event.bqual_length = 0;
+        }
+        Option::Some(event)
+    }
+
+    pub fn one_phase(&self) -> bool {
+        self.one_phase
+    }
+    pub fn format_id(&self) -> i32 {
+        self.format_id
+    }
+    pub fn gtrid_length(&self) -> i32 {
+        self.gtrid_length
+    }
+    pub fn bqual_length(&self) -> i32 {
+        self.bqual_length
+    }
+    pub fn data(&self) -> &Box<[u8]> {
+        &self.data
+    }
+}
+
+pub struct XidLogEvent {
+    event: Event,
+    xid: i64
+}
+
+
+impl XidLogEvent {
+
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+        let event = XidLogEvent {
+            event: Event::new(),
+            xid: 0
+        };
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[XID_EVENT -1] as usize);
+        Option::Some(event)
+    }
+
+
+    pub fn xid(&self) -> i64 {
+        self.xid
+    }
+}
 pub enum LogEvent {
     AppendBlockLog(AppendBlockLogEvent),
     BeginLoadQueryLog(BeginLoadQueryLogEvent),
@@ -2832,3 +3099,34 @@ impl Display for LogPosition {
 
 
 type StringResult<T> = Result<T, String>;
+
+enum Serializable {
+    String(String),
+    Double(f64),
+    Long(i64),
+    BigDecimal(BigDecimal),
+    Null,
+}
+
+impl PartialEq for Serializable {
+    fn eq(&self, other: &Self) -> bool {
+        if self == other {
+            return true;
+        }
+
+        return false;
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        if self != other {
+            return true;
+        }
+        return false;
+    }
+}
+
+impl Display for Serializable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
