@@ -191,6 +191,7 @@ pub mod client;
 
 pub mod event;
 
+pub mod decoder;
 /**
  * <pre>
  * Offset  Length     Description

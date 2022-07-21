@@ -1603,6 +1603,9 @@ impl LogBuffer {
     pub fn new() -> Self {
         Self { buffer: vec![], origin: 0, limit: 0, position: 0, seminal: 0 }
     }
+    pub fn seminal(&self) -> u8 {
+        self.seminal
+    }
 }
 
 

@@ -470,12 +470,15 @@ impl LogHeader {
     pub fn set_gtid_map(&mut self, gtid_map: HashMap<String, String>) {
         self.gtid_map = gtid_map;
     }
+
+
+
 }
 
 
 pub struct Event {
     header: LogHeader,
-    semival: u32,
+    semival: u8,
 }
 
 impl Clone for Event {
@@ -538,14 +541,14 @@ impl Event {
     pub fn header(&self) -> &LogHeader {
         &self.header
     }
-    pub fn semival(&self) -> u32 {
+    pub fn semival(&self) -> u8 {
         self.semival
     }
 
     pub fn from(&mut self, header: LogHeader) {
         self.header = header;
     }
-    pub fn set_semival(&mut self, semival: u32) {
+    pub fn set_semival(&mut self, semival: u8) {
         self.semival = semival;
     }
     pub fn get_event_len(&self) -> usize {
@@ -1905,7 +1908,9 @@ impl RotateLogEvent {
     }
 }
 
-pub struct RowsLogBuffer {}
+pub struct RowsLogBuffer {
+    event: Event
+}
 
 pub struct RowsLogEvent {
     event: Event,
@@ -2695,7 +2700,7 @@ pub struct UnknownLogEvent {
 }
 
 impl UnknownLogEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+    pub fn from(header: &LogHeader) -> Option<Self> {
         let mut event = UnknownLogEvent {
             event: Event::new()
         };
@@ -2949,6 +2954,7 @@ impl XidLogEvent {
     }
 }
 pub enum LogEvent {
+    Null(Option<()>),
     AppendBlockLog(AppendBlockLogEvent),
     BeginLoadQueryLog(BeginLoadQueryLogEvent),
     CreateFileLog(CreateFileLogEvent),
@@ -2983,6 +2989,230 @@ pub enum LogEvent {
     WriteRowsLog(WriteRowsLogEvent),
     XaPrepareLog(XaPrepareLogEvent),
     XidLog(XidLogEvent),
+}
+
+impl LogEvent {
+
+    pub fn header_mut(&mut self) -> Option<&mut LogHeader>{
+        return match self {
+            LogEvent::AppendBlockLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::BeginLoadQueryLog(ref mut event) => {
+                Option::Some(&mut event.append_block_log_event.event.header)
+            }
+            LogEvent::CreateFileLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::DeleteFileLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::DeleteRowsLog(ref mut event) => {
+                Option::Some(&mut event.rows_log_event.event.header)
+            }
+            LogEvent::ExecuteLoadLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::ExecuteLoadQueryLog(ref mut event) => {
+                Option::Some(&mut event.query_log_event.event.header)
+            }
+            LogEvent::FormatDescriptionLog(ref mut event) => {
+                Option::Some(&mut event.start_log_event_v3.event.header)
+            }
+            LogEvent::GtidLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::HeartbeatLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::IgnorableLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::IncidentLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::InvarianceLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::LoadLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::PreviousGtidsLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::QueryLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::RandLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::RotateLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::RowsLogBuffer(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::RowsLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::RowsQueryLog(ref mut event) => {
+                Option::Some(&mut event.ignorable_log_event.event.header)
+            }
+            LogEvent::StartLogV3(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::StopLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::TableMapLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::TransactionContextLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::TransactionPayloadLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::UnknownLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::UpdateRowsLog(ref mut event) => {
+                Option::Some(&mut event.rows_log_event.table_map_log_event.event.header)
+            }
+            LogEvent::UserVarLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::ViewChange(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::WriteRowsLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::XaPrepareLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::XidLog(ref mut event) => {
+                Option::Some(&mut event.event.header)
+            }
+            LogEvent::Null(ref mut _event) => {
+                Option::None
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+
+    pub fn event_mut(&mut self) -> Option<&mut Event>{
+        return match self {
+            LogEvent::AppendBlockLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::BeginLoadQueryLog(ref mut event) => {
+                Option::Some(&mut event.append_block_log_event.event)
+            }
+            LogEvent::CreateFileLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::DeleteFileLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::DeleteRowsLog(ref mut event) => {
+                Option::Some(&mut event.rows_log_event.event)
+            }
+            LogEvent::ExecuteLoadLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::ExecuteLoadQueryLog(ref mut event) => {
+                Option::Some(&mut event.query_log_event.event)
+            }
+            LogEvent::FormatDescriptionLog(ref mut event) => {
+                Option::Some(&mut event.start_log_event_v3.event)
+            }
+            LogEvent::GtidLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::HeartbeatLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::IgnorableLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::IncidentLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::InvarianceLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::LoadLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::PreviousGtidsLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::QueryLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::RandLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::RotateLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::RowsLogBuffer(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::RowsLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::RowsQueryLog(ref mut event) => {
+                Option::Some(&mut event.ignorable_log_event.event)
+            }
+            LogEvent::StartLogV3(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::StopLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::TableMapLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::TransactionContextLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::TransactionPayloadLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::UnknownLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::UpdateRowsLog(ref mut event) => {
+                Option::Some(&mut event.rows_log_event.table_map_log_event.event)
+            }
+            LogEvent::UserVarLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::ViewChange(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::WriteRowsLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::XaPrepareLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::XidLog(ref mut event) => {
+                Option::Some(&mut event.event)
+            }
+            LogEvent::Null(ref mut _event) => {
+                Option::None
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
 }
 
 pub struct LogContext {
@@ -3082,6 +3312,14 @@ impl LogPosition {
             file_name: Option::None,
             position: 0,
         }
+    }
+
+
+    pub fn file_name(&self) -> &Option<String> {
+        &self.file_name
+    }
+    pub fn position(&self) -> usize {
+        self.position
     }
 }
 
