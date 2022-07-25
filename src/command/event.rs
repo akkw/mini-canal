@@ -538,8 +538,8 @@ impl Event {
             _ => format!("Unknown type=> {}", t)
         }
     }
-    pub fn header(&self) -> &LogHeader {
-        &self.header
+    pub fn header(&mut self) -> &mut LogHeader {
+        &mut self.header
     }
     pub fn semival(&self) -> u8 {
         self.semival
@@ -713,9 +713,14 @@ pub struct DeleteRowsLogEvent {
 }
 
 impl DeleteRowsLogEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Self {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let event = DeleteRowsLogEvent { rows_log_event: RowsLogEvent::from(header, buffer, description_event, false) };
-        event
+        Option::Some(event)
+    }
+
+
+    pub fn rows_log_event_mut(&mut self) -> &mut RowsLogEvent {
+        &mut self.rows_log_event
     }
 }
 
@@ -824,6 +829,7 @@ impl Clone for FormatDescriptionLogEvent {
 
 
 impl FormatDescriptionLogEvent {
+
     pub const ST_SERVER_VER_LEN: usize = 50;
     pub const ST_BINLOG_VER_OFFSET: u8 = 0;
     pub const ST_SERVER_VER_OFFSET: u8 = 2;
@@ -1070,6 +1076,9 @@ impl FormatDescriptionLogEvent {
             server_version_split: [0, 0, 0],
         }
     }
+    pub fn start_log_event_v3(&mut self) -> &mut StartLogEventV3 {
+        &mut self.start_log_event_v3
+    }
 }
 
 pub struct GtidLogEvent {
@@ -1292,7 +1301,7 @@ impl LoadLogEvent {
     const LINE_START_EMPTY: u8 = 0x8;
     const ESCAPED_EMPTY: u8 = 0x10;
 
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Self {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = LoadLogEvent {
             event: Event::new(),
             table: Option::None,
@@ -1314,7 +1323,7 @@ impl LoadLogEvent {
         let load_header_len = FormatDescriptionLogEvent::LOAD_HEADER_LEN;
         let body_offset = if event.event.header.kind == LOAD_EVENT { load_header_len + description_event.common_header_len } else { load_header_len + FormatDescriptionLogEvent::LOG_EVENT_HEADER_LEN };
         event.copy_log_event(buffer, body_offset, description_event);
-        event
+        Option::Some(event)
     }
 
     pub fn copy_log_event(&mut self, buffer: &mut LogBuffer, body_offset: usize, description_event: &FormatDescriptionLogEvent) {
@@ -2117,6 +2126,10 @@ impl StartLogEventV3 {
     pub fn new() -> Self {
         Self { event: Event::new(), binlog_version: 0, server_version: None }
     }
+
+    pub fn event(&mut self) -> &mut Event {
+        &mut self.event
+    }
 }
 
 pub struct StopLogEvent {
@@ -2161,7 +2174,7 @@ impl TableMapLogEvent {
     const ENUM_AND_SET_COLUMN_CHARSET: u8 = 11;
     const COLUMN_VISIBILITY: u8 = 12;
 
-    pub fn from(header: LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<TableMapLogEvent, String> {
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<TableMapLogEvent, String> {
         let mut event = TableMapLogEvent {
             event: Event::new(),
             dbname: Option::None,
@@ -2729,6 +2742,11 @@ impl UpdateRowsLogEvent {
         event.rows_log_event = RowsLogEvent::from(header, buffer, description_event, partial);
         Option::Some(event)
     }
+
+
+    pub fn rows_log_event_mut(&mut self) -> &mut RowsLogEvent {
+        &mut self.rows_log_event
+    }
 }
 
 pub struct UserVarLogEvent {
@@ -2854,16 +2872,21 @@ impl ViewChangeEvent {
 }
 
 pub struct WriteRowsLogEvent {
-    event: Event,
+    event: RowsLogEvent,
 }
 
 impl WriteRowsLogEvent {
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = WriteRowsLogEvent {
-            event: Event::new()
+            event: RowsLogEvent::from(header, buffer, description_event, false),
         };
-        event.event.header = header.clone();
+        event.event.event.header = header.clone();
         Option::Some(event)
+    }
+
+
+    pub fn event_mut(&mut self) -> &mut RowsLogEvent {
+        &mut self.event
     }
 }
 
@@ -3086,7 +3109,7 @@ impl LogEvent {
                 Option::Some(&mut event.event.header)
             }
             LogEvent::WriteRowsLog(ref mut event) => {
-                Option::Some(&mut event.event.header)
+                Option::Some(&mut event.event.event.header)
             }
             LogEvent::XaPrepareLog(ref mut event) => {
                 Option::Some(&mut event.event.header)
@@ -3197,7 +3220,7 @@ impl LogEvent {
                 Option::Some(&mut event.event)
             }
             LogEvent::WriteRowsLog(ref mut event) => {
-                Option::Some(&mut event.event)
+                Option::Some(&mut event.event.event)
             }
             LogEvent::XaPrepareLog(ref mut event) => {
                 Option::Some(&mut event.event)
@@ -3241,11 +3264,11 @@ impl LogContext {
     }
 
 
-    pub fn description_event(&self) -> &FormatDescriptionLogEvent {
-        &self.description_event
+    pub fn description_event(&mut self) -> &mut FormatDescriptionLogEvent {
+        &mut self.description_event
     }
-    pub fn position(&self) -> &LogPosition {
-        &self.position
+    pub fn position(&mut self) -> &mut LogPosition {
+        &mut self.position
     }
     pub fn get_table(&self, table_id: u64) -> &TableMapLogEvent {
         self.map_table.get(&table_id).unwrap()
@@ -3320,6 +3343,14 @@ impl LogPosition {
     }
     pub fn position(&self) -> usize {
         self.position
+    }
+
+
+    pub fn set_file_name(&mut self, file_name: Option<String>) {
+        self.file_name = file_name;
+    }
+    pub fn set_position(&mut self, position: usize) {
+        self.position = position;
     }
 }
 
