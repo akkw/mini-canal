@@ -1,13 +1,13 @@
 use crate::channel::mysql_socket::{MysqlConnection};
-use crate::instance::metadata::EntryPosition;
-use crate::instance::parser::{LogEventConvert};
+use crate::log::metadata::EntryPosition;
+use crate::log::parser::{LogEventConvert};
 use crate::parse::support::AuthenticationInfo;
 
 pub struct MysqlEventParser {
     database_info: Option<AuthenticationInfo>,
     master_position: Option<EntryPosition>,
     meta_connection: Option<MysqlConnection>,
-    binlog_parser: Option<LogEventConvert>,
+    binlog_parser: LogEventConvert,
     running: bool,
     server_id: i64,
     position: Option<EntryPosition>
@@ -19,7 +19,7 @@ impl MysqlEventParser {
             database_info: Option::Some(authentication_info),
             master_position: None,
             meta_connection: None,
-            binlog_parser: None,
+            binlog_parser: LogEventConvert::new(),
             running: false,
             server_id: 0,
             position: None
@@ -27,7 +27,6 @@ impl MysqlEventParser {
     }
 
     pub fn start(&mut self) where {
-        self.binlog_parser = build_parser();
         self.running = true;
         // while self.running {
         let mut connection = build_connection(self.database_info.as_ref().unwrap().address(),
@@ -82,10 +81,6 @@ impl MysqlEventParser {
     }
 }
 
-
-fn build_parser() -> Option<LogEventConvert> {
-    Option::Some(LogEventConvert {})
-}
 
 fn build_connection(address: &str, port: u16, username: &str, password: &str, schema: &str) -> MysqlConnection {
     let mut connection = MysqlConnection::from_schema(

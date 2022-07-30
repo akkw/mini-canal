@@ -3,264 +3,11 @@ use std::fmt::{Display, Formatter};
 use bigdecimal::BigDecimal;
 use bit_set::BitSet;
 use uuid::Uuid;
-use crate::command::{get_i64};
-use crate::instance::log_buffer::LogBuffer;
+use crate::command::{event, get_i64};
+use crate::command::event::LogEvent::{AppendBlockLog, BeginLoadQueryLog, CreateFileLog};
+use crate::log::log_buffer::LogBuffer;
 
 
-/* Enumeration type for the different types of log events. */
-pub const UNKNOWN_EVENT: u8 = 0;
-pub const START_EVENT_V3: usize = 1;
-pub const QUERY_EVENT: usize = 2;
-pub const STOP_EVENT: usize = 3;
-pub const ROTATE_EVENT: usize = 4;
-pub const INTVAR_EVENT: usize = 5;
-pub const LOAD_EVENT: usize = 6;
-pub const SLAVE_EVENT: usize = 7;
-pub const CREATE_FILE_EVENT: usize = 8;
-pub const APPEND_BLOCK_EVENT: usize = 9;
-pub const EXEC_LOAD_EVENT: usize = 10;
-pub const DELETE_FILE_EVENT: usize = 11;
-
-/*
-     * 3 is MySQL 4.x; 4 is MySQL 5.0.0. Compared to version 3, version 4 has: -
-     * a different Start_log_event, which includes info about the binary log
-     * (sizes of headers); this info is included for better compatibility if the
-     * master's MySQL version is different from the slave's. - all events have a
-     * unique ID (the triplet (server_id, timestamp at server start, other) to
-     * be sure an event is not executed more than once in a multimaster setup,
-     * example: M1 / \ v v M2 M3 \ / v v S if a query is run on M1, it will
-     * arrive twice on S, so we need that S remembers the last unique ID it has
-     * processed, to compare and know if the event should be skipped or not.
-     * Example of ID: we already have the server id (4 bytes), plus:
-     * timestamp_when_the_master_started (4 bytes), a counter (a sequence number
-     * which increments every time we write an event to the binlog) (3 bytes).
-     * Q: how do we handle when the counter is overflowed and restarts from 0 ?
-     * - Query and Load (Create or Execute) events may have a more precise
-     * timestamp (with microseconds), number of matched/affected/warnings rows
-     * and fields of session variables: SQL_MODE, FOREIGN_KEY_CHECKS,
-     * UNIQUE_CHECKS, SQL_AUTO_IS_NULL, the collations and charsets, the
-     * PASSWORD() version (old/new/...).
-     */
-
-pub const BINLOG_VERSION: u8 = 4;
-
-/* Default 5.0 server version */
-pub const SERVER_VERSION: &str = "5.0";
-
-/**
- * Event header offsets; these point to places inside the fixed header.
- */
-pub const EVENT_TYPE_OFFSET: u8 = 4;
-pub const SERVER_ID_OFFSET: u8 = 5;
-pub const EVENT_LEN_OFFSET: u8 = 9;
-pub const LOG_POS_OFFSET: u8 = 13;
-pub const FLAGS_OFFSET: u8 = 17;
-
-/* event-specific post-header sizes */
-// where 3.23, 4.x and 5.0 agree
-pub const QUERY_HEADER_MINIMAL_LEN: u8 = 4 + 4 + 1 + 2;
-// where 5.0 differs: 2 for len of N-bytes vars.
-pub const QUERY_HEADER_LEN: u8 = QUERY_HEADER_MINIMAL_LEN + 2;
-
-
-/**
- * NEW_LOAD_EVENT is like LOAD_EVENT except that it has a longer sql_ex,
- * allowing multibyte TERMINATED BY etc; both types share the same class
- * (Load_log_event)
- */
-pub const NEW_LOAD_EVENT: usize = 12;
-pub const RAND_EVENT: usize = 13;
-pub const USER_VAR_EVENT: usize = 14;
-pub const FORMAT_DESCRIPTION_EVENT: usize = 15;
-pub const XID_EVENT: usize = 16;
-pub const BEGIN_LOAD_QUERY_EVENT: usize = 17;
-pub const EXECUTE_LOAD_QUERY_EVENT: usize = 18;
-pub const TABLE_MAP_EVENT: usize = 19;
-
-/**
- * These event numbers were used for 5.1.0 to 5.1.15 and are therefore
- * obsolete.
- */
-pub const PRE_GA_WRITE_ROWS_EVENT: usize = 20;
-pub const PRE_GA_UPDATE_ROWS_EVENT: usize = 21;
-pub const PRE_GA_DELETE_ROWS_EVENT: usize = 22;
-
-/**
- * These event numbers are used from 5.1.16 and forward
- */
-pub const WRITE_ROWS_EVENT_V1: usize = 23;
-pub const UPDATE_ROWS_EVENT_V1: usize = 24;
-pub const DELETE_ROWS_EVENT_V1: usize = 25;
-
-/**
- * Something out of the ordinary happened on the master
- */
-pub const INCIDENT_EVENT: usize = 26;
-
-/**
- * Heartbeat event to be send by master at its idle time to ensure master's
- * online status to slave
- */
-pub const HEARTBEAT_LOG_EVENT: usize = 27;
-
-/**
- * In some situations, it is necessary to send over ignorable data to the
- * slave: data that a slave can handle in  there is code for handling
- * it, but which can be ignored if it is not recognized.
- */
-pub const IGNORABLE_LOG_EVENT: usize = 28;
-pub const ROWS_QUERY_LOG_EVENT: usize = 29;
-
-/** Version 2 of the Row events */
-pub const WRITE_ROWS_EVENT: usize = 30;
-pub const UPDATE_ROWS_EVENT: usize = 31;
-pub const DELETE_ROWS_EVENT: usize = 32;
-pub const GTID_LOG_EVENT: usize = 33;
-pub const ANONYMOUS_GTID_LOG_EVENT: usize = 34;
-
-pub const PREVIOUS_GTIDS_LOG_EVENT: usize = 35;
-
-/* MySQL 5.7 events */
-pub const TRANSACTION_CONTEXT_EVENT: usize = 36;
-
-pub const VIEW_CHANGE_EVENT: usize = 37;
-
-/* Prepared XA transaction terminal event similar to Xid */
-pub const XA_PREPARE_LOG_EVENT: usize = 38;
-
-/**
- * Extension of UPDATE_ROWS_EVENT, allowing partial values according to
- * binlog_row_value_options.
- */
-pub const PARTIAL_UPDATE_ROWS_EVENT: usize = 39;
-
-/* mysql 8.0.20 */
-pub const TRANSACTION_PAYLOAD_EVENT: usize = 40;
-
-pub const MYSQL_ENUM_END_EVENT: usize = 41;
-
-// mariaDb 5.5.34
-/* New MySQL/Sun events are to be added right above this comment */
-pub const MYSQL_EVENTS_END: usize = 49;
-
-pub const MARIA_EVENTS_BEGIN: usize = 160;
-/* New Maria event numbers start from here */
-pub const ANNOTATE_ROWS_EVENT: usize = 160;
-/*
- * Binlog checkpoint event. Used for XA crash recovery on the master, not
- * used in replication. A binlog checkpoint event specifies a binlog file
- * such that XA crash recovery can start from that file - and it is
- * guaranteed to find all XIDs that are prepared in storage engines but not
- * yet committed.
- */
-pub const BINLOG_CHECKPOINT_EVENT: usize = 161;
-/*
- * Gtid event. For global transaction ID, used to start a new event group,
- * instead of the old BEGIN query event, and also to mark stand-alone
- * events.
- */
-pub const GTID_EVENT: usize = 162;
-/*
- * Gtid list event. Logged at the start of every binlog, to record the
- * current replication state. This consists of the last GTID seen for each
- * replication domain.
- */
-pub const GTID_LIST_EVENT: usize = 163;
-
-pub const START_ENCRYPTION_EVENT: usize = 164;
-
-/** end marker */
-pub const ENUM_END_EVENT: usize = 165;
-
-/**
- * 1 byte length, 1 byte format Length is total length in bytes, including 2
- * byte header Length values 0 and 1 are currently invalid and reserved.
- */
-pub const EXTRA_ROW_INFO_LEN_OFFSET: u8 = 0;
-pub const EXTRA_ROW_INFO_FORMAT_OFFSET: u8 = 1;
-pub const EXTRA_ROW_INFO_HDR_BYTES: u8 = 2;
-pub const EXTRA_ROW_INFO_MAX_PAYLOAD: u8 = 255 - EXTRA_ROW_INFO_HDR_BYTES;
-
-// Events are without checksum though its generator
-pub const BINLOG_CHECKSUM_ALG_OFF: u8 = 0;
-// is checksum-capable New Master (NM).
-// CRC32 of zlib algorithm.
-pub const BINLOG_CHECKSUM_ALG_CRC32: u8 = 1;
-// the cut line: valid alg range is [1, 0x7f].
-pub const BINLOG_CHECKSUM_ALG_ENUM_END: u8 = 2;
-// special value to tag undetermined yet checksum
-pub const BINLOG_CHECKSUM_ALG_UNDEF: u8 = 255;
-// or events from checksum-unaware servers
-
-pub const CHECKSUM_CRC32_SIGNATURE_LEN: u8 = 4;
-pub const BINLOG_CHECKSUM_ALG_DESC_LEN: u8 = 1;
-/**
- * defined statically while there is just one alg implemented
- */
-pub const BINLOG_CHECKSUM_LEN: u8 = CHECKSUM_CRC32_SIGNATURE_LEN;
-
-/* MySQL or old MariaDB slave with no announced capability. */
-pub const MARIA_SLAVE_CAPABILITY_UNKNOWN: u8 = 0;
-
-/* MariaDB >= 5.3, which understands ANNOTATE_ROWS_EVENT. */
-pub const MARIA_SLAVE_CAPABILITY_ANNOTATE: u8 = 1;
-/*
- * MariaDB >= 5.5. This version has the capability to tolerate events
- * omitted from the binlog stream without breaking replication (MySQL slaves
- * fail because they mis-compute the offsets into the master's binlog).
- */
-pub const MARIA_SLAVE_CAPABILITY_TOLERATE_HOLES: u8 = 2;
-/* MariaDB >= 10.0, which knows about binlog_checkpoint_log_event. */
-pub const MARIA_SLAVE_CAPABILITY_BINLOG_CHECKPOINT: u8 = 3;
-/* MariaDB >= 10.0.1, which knows about global transaction id events. */
-pub const MARIA_SLAVE_CAPABILITY_GTID: u8 = 4;
-
-/* Our capability. */
-pub const MARIA_SLAVE_CAPABILITY_MINE: u8 = MARIA_SLAVE_CAPABILITY_GTID;
-
-/**
- * For an event, 'e', carrying a type code, that a slave, 's', does not
- * recognize, 's' will check 'e' for LOG_EVENT_IGNORABLE_F, and if the flag
- * is set, then 'e' is ignored. Otherwise, 's' acknowledges that it has
- * found an unknown event in the relay log.
- */
-pub const LOG_EVENT_IGNORABLE_F: u8 = 0x80;
-
-/** enum_field_types */
-pub const MYSQL_TYPE_DECIMAL: u8 = 0;
-pub const MYSQL_TYPE_TINY: u8 = 1;
-pub const MYSQL_TYPE_SHORT: u8 = 2;
-pub const MYSQL_TYPE_LONG: u8 = 3;
-pub const MYSQL_TYPE_FLOAT: u8 = 4;
-pub const MYSQL_TYPE_DOUBLE: u8 = 5;
-pub const MYSQL_TYPE_NULL: u8 = 6;
-pub const MYSQL_TYPE_TIMESTAMP: u8 = 7;
-pub const MYSQL_TYPE_LONGLONG: u8 = 8;
-pub const MYSQL_TYPE_INT24: u8 = 9;
-pub const MYSQL_TYPE_DATE: u8 = 10;
-pub const MYSQL_TYPE_TIME: u8 = 11;
-pub const MYSQL_TYPE_DATETIME: u8 = 12;
-pub const MYSQL_TYPE_YEAR: u8 = 13;
-pub const MYSQL_TYPE_NEWDATE: u8 = 14;
-pub const MYSQL_TYPE_VARCHAR: u8 = 15;
-pub const MYSQL_TYPE_BIT: u8 = 16;
-pub const MYSQL_TYPE_TIMESTAMP2: u8 = 17;
-pub const MYSQL_TYPE_DATETIME2: u8 = 18;
-pub const MYSQL_TYPE_TIME2: u8 = 19;
-pub const MYSQL_TYPE_TYPED_ARRAY: u8 = 20;
-pub const MYSQL_TYPE_INVALID: u8 = 243;
-pub const MYSQL_TYPE_BOOL: u8 = 244;
-pub const MYSQL_TYPE_JSON: u8 = 245;
-pub const MYSQL_TYPE_NEWDECIMAL: u8 = 246;
-pub const MYSQL_TYPE_ENUM: u8 = 247;
-pub const MYSQL_TYPE_SET: u8 = 248;
-pub const MYSQL_TYPE_TINY_BLOB: u8 = 249;
-pub const MYSQL_TYPE_MEDIUM_BLOB: u8 = 250;
-pub const MYSQL_TYPE_LONG_BLOB: u8 = 251;
-pub const MYSQL_TYPE_BLOB: u8 = 252;
-pub const MYSQL_TYPE_VAR_STRING: u8 = 253;
-pub const MYSQL_TYPE_STRING: u8 = 254;
-pub const MYSQL_TYPE_GEOMETRY: u8 = 255;
 
 #[derive(Debug)]
 pub struct LogHeader {
@@ -333,7 +80,7 @@ impl LogHeader {
          * reading a Format_desc (remember that mysqlbinlog starts by assuming
          * that 5.0 logs are in 4.0 format, until it finds a Format_desc).
          */
-        if description_event.start_log_event_v3.binlog_version == 3 && header.kind < FORMAT_DESCRIPTION_EVENT && header.log_pos != 0 {
+        if description_event.start_log_event_v3.binlog_version == 3 && header.kind < Event::FORMAT_DESCRIPTION_EVENT && header.log_pos != 0 {
             /*
              * If log_pos=0, don't change it. log_pos==0 is a marker to mean
              * "don't change rli->group_master_log_pos" (see
@@ -349,7 +96,7 @@ impl LogHeader {
         }
 
         header.flags = buffer.get_uint16().ok()?;
-        if header.kind == FORMAT_DESCRIPTION_EVENT || header.kind == ROTATE_EVENT {
+        if header.kind == Event::FORMAT_DESCRIPTION_EVENT || header.kind == Event::ROTATE_EVENT {
             /*
             * These events always have a header which stops here (i.e. their
             * header is FROZEN).
@@ -363,7 +110,7 @@ impl LogHeader {
             * master). Then we are done.
             */
 
-            if header.kind == FORMAT_DESCRIPTION_EVENT {
+            if header.kind == Event::FORMAT_DESCRIPTION_EVENT {
                 let common_header_len = buffer.get_uint8_pos(
                     (FormatDescriptionLogEvent::LOG_EVENT_MINIMAL_HEADER_LEN + FormatDescriptionLogEvent::ST_COMMON_HEADER_LEN_OFFSET) as usize
                 ).ok()? as usize;
@@ -372,10 +119,10 @@ impl LogHeader {
                 let server_version = buffer.get_fix_string_len(FormatDescriptionLogEvent::ST_SERVER_VER_LEN)?;
                 let mut version_split = [0, 0, 0];
                 FormatDescriptionLogEvent::do_server_version_split(&server_version, &mut version_split);
-                header.checksum_alg = BINLOG_CHECKSUM_ALG_UNDEF;
+                header.checksum_alg = Event::BINLOG_CHECKSUM_ALG_UNDEF;
 
                 if FormatDescriptionLogEvent::version_product(&mut version_split) >= FormatDescriptionLogEvent::CHECKSUM_VERSION_PRODUCT {
-                    buffer.up_position(header.event_len - BINLOG_CHECKSUM_LEN as usize - BINLOG_CHECKSUM_ALG_DESC_LEN as usize).unwrap();
+                    buffer.up_position(header.event_len - Event::BINLOG_CHECKSUM_LEN as usize - Event::BINLOG_CHECKSUM_ALG_DESC_LEN as usize).unwrap();
                     header.checksum_alg = buffer.get_uint8().ok()?
                 }
 
@@ -390,8 +137,8 @@ impl LogHeader {
 
 
     fn process_check_sum(&mut self, buffer: &mut LogBuffer) {
-        if self.checksum_alg != BINLOG_CHECKSUM_ALG_OFF && self.checksum_alg != BINLOG_CHECKSUM_ALG_UNDEF {
-            self.crc = buffer.get_uint32_pos(self.event_len - BINLOG_CHECKSUM_LEN as usize).unwrap();
+        if self.checksum_alg != Event::BINLOG_CHECKSUM_ALG_OFF && self.checksum_alg != Event::BINLOG_CHECKSUM_ALG_UNDEF {
+            self.crc = buffer.get_uint32_pos(self.event_len - Event::BINLOG_CHECKSUM_LEN as usize).unwrap();
         }
     }
     pub fn from_kind(kind: usize) -> LogHeader {
@@ -491,50 +238,302 @@ impl Clone for Event {
 }
 
 impl Event {
+    /*
+     * 3 is MySQL 4.x; 4 is MySQL 5.0.0. Compared to version 3, version 4 has: -
+     * a different Start_log_event, which includes info about the binary log
+     * (sizes of headers); this info is included for better compatibility if the
+     * master's MySQL version is different from the slave's. - all events have a
+     * unique ID (the triplet (server_id, timestamp at server start, other) to
+     * be sure an event is not executed more than once in a multimaster setup,
+     * example: M1 / \ v v M2 M3 \ / v v S if a query is run on M1, it will
+     * arrive twice on S, so we need that S remembers the last unique ID it has
+     * processed, to compare and know if the event should be skipped or not.
+     * Example of ID: we already have the server id (4 bytes), plus:
+     * timestamp_when_the_master_started (4 bytes), a counter (a sequence number
+     * which increments every time we write an event to the binlog) (3 bytes).
+     * Q: how do we handle when the counter is overflowed and restarts from 0 ?
+     * - Query and Load (Create or Execute) events may have a more precise
+     * timestamp (with microseconds), number of matched/affected/warnings rows
+     * and fields of session variables: SQL_MODE, FOREIGN_KEY_CHECKS,
+     * UNIQUE_CHECKS, SQL_AUTO_IS_NULL, the collations and charsets, the
+     * PASSWORD() version (old/new/...).
+     */
+
+    pub const BINLOG_VERSION: u8 = 4;
+
+    /* Default 5.0 server version */
+    pub const SERVER_VERSION: &'static str = "5.0";
+
+    /**
+     * Event header offsets; these point to places inside the fixed header.
+     */
+    pub const EVENT_TYPE_OFFSET: u8 = 4;
+    pub const SERVER_ID_OFFSET: u8 = 5;
+    pub const EVENT_LEN_OFFSET: u8 = 9;
+    pub const LOG_POS_OFFSET: u8 = 13;
+    pub const FLAGS_OFFSET: u8 = 17;
+
+    /* event-specific post-header sizes */
+    // where 3.23, 4.x and 5.0 agree
+    pub const QUERY_HEADER_MINIMAL_LEN: u8 = 4 + 4 + 1 + 2;
+    // where 5.0 differs: 2 for len of N-bytes vars.
+    pub const QUERY_HEADER_LEN: u8 = Event::QUERY_HEADER_MINIMAL_LEN + 2;
+
+    /* Enumeration type for the different types of log events. */
+    pub const UNKNOWN_EVENT: u8 = 0;
+    pub const START_EVENT_V3: usize = 1;
+    pub const QUERY_EVENT: usize = 2;
+    pub const STOP_EVENT: usize = 3;
+    pub const ROTATE_EVENT: usize = 4;
+    pub const INTVAR_EVENT: usize = 5;
+    pub const LOAD_EVENT: usize = 6;
+    pub const SLAVE_EVENT: usize = 7;
+    pub const CREATE_FILE_EVENT: usize = 8;
+    pub const APPEND_BLOCK_EVENT: usize = 9;
+    pub const EXEC_LOAD_EVENT: usize = 10;
+    pub const DELETE_FILE_EVENT: usize = 11;
+
+    /**
+     * NEW_LOAD_EVENT is like LOAD_EVENT except that it has a longer sql_ex,
+     * allowing multibyte TERMINATED BY etc; both types share the same class
+     * (Load_log_event)
+     */
+    pub const NEW_LOAD_EVENT: usize = 12;
+    pub const RAND_EVENT: usize = 13;
+    pub const USER_VAR_EVENT: usize = 14;
+    pub const FORMAT_DESCRIPTION_EVENT: usize = 15;
+    pub const XID_EVENT: usize = 16;
+    pub const BEGIN_LOAD_QUERY_EVENT: usize = 17;
+    pub const EXECUTE_LOAD_QUERY_EVENT: usize = 18;
+    pub const TABLE_MAP_EVENT: usize = 19;
+
+    /**
+     * These event numbers were used for 5.1.0 to 5.1.15 and are therefore
+     * obsolete.
+     */
+    pub const PRE_GA_WRITE_ROWS_EVENT: usize = 20;
+    pub const PRE_GA_UPDATE_ROWS_EVENT: usize = 21;
+    pub const PRE_GA_DELETE_ROWS_EVENT: usize = 22;
+
+    /**
+     * These event numbers are used from 5.1.16 and forward
+     */
+    pub const WRITE_ROWS_EVENT_V1: usize = 23;
+    pub const UPDATE_ROWS_EVENT_V1: usize = 24;
+    pub const DELETE_ROWS_EVENT_V1: usize = 25;
+
+    /**
+     * Something out of the ordinary happened on the master
+     */
+    pub const INCIDENT_EVENT: usize = 26;
+
+    /**
+     * Heartbeat event to be send by master at its idle time to ensure master's
+     * online status to slave
+     */
+    pub const HEARTBEAT_LOG_EVENT: usize = 27;
+
+    /**
+     * In some situations, it is necessary to send over ignorable data to the
+     * slave: data that a slave can handle in  there is code for handling
+     * it, but which can be ignored if it is not recognized.
+     */
+    pub const IGNORABLE_LOG_EVENT: usize = 28;
+    pub const ROWS_QUERY_LOG_EVENT: usize = 29;
+
+    /** Version 2 of the Row events */
+    pub const WRITE_ROWS_EVENT: usize = 30;
+    pub const UPDATE_ROWS_EVENT: usize = 31;
+    pub const DELETE_ROWS_EVENT: usize = 32;
+    pub const GTID_LOG_EVENT: usize = 33;
+    pub const ANONYMOUS_GTID_LOG_EVENT: usize = 34;
+
+    pub const PREVIOUS_GTIDS_LOG_EVENT: usize = 35;
+
+    /* MySQL 5.7 events */
+    pub const TRANSACTION_CONTEXT_EVENT: usize = 36;
+
+    pub const VIEW_CHANGE_EVENT: usize = 37;
+
+    /* Prepared XA transaction terminal event similar to Xid */
+    pub const XA_PREPARE_LOG_EVENT: usize = 38;
+
+    /**
+     * Extension of UPDATE_ROWS_EVENT, allowing partial values according to
+     * binlog_row_value_options.
+     */
+    pub const PARTIAL_UPDATE_ROWS_EVENT: usize = 39;
+
+    /* mysql 8.0.20 */
+    pub const TRANSACTION_PAYLOAD_EVENT: usize = 40;
+
+    pub const MYSQL_ENUM_END_EVENT: usize = 41;
+
+    // mariaDb 5.5.34
+    /* New MySQL/Sun events are to be added right above this comment */
+    pub const MYSQL_EVENTS_END: usize = 49;
+
+    pub const MARIA_EVENTS_BEGIN: usize = 160;
+    /* New Maria event numbers start from here */
+    pub const ANNOTATE_ROWS_EVENT: usize = 160;
+    /*
+     * Binlog checkpoint event. Used for XA crash recovery on the master, not
+     * used in replication. A binlog checkpoint event specifies a binlog file
+     * such that XA crash recovery can start from that file - and it is
+     * guaranteed to find all XIDs that are prepared in storage engines but not
+     * yet committed.
+     */
+    pub const BINLOG_CHECKPOINT_EVENT: usize = 161;
+    /*
+     * Gtid event. For global transaction ID, used to start a new event group,
+     * instead of the old BEGIN query event, and also to mark stand-alone
+     * events.
+     */
+    pub const GTID_EVENT: usize = 162;
+    /*
+     * Gtid list event. Logged at the start of every binlog, to record the
+     * current replication state. This consists of the last GTID seen for each
+     * replication domain.
+     */
+    pub const GTID_LIST_EVENT: usize = 163;
+
+    pub const START_ENCRYPTION_EVENT: usize = 164;
+
+    /** end marker */
+    pub const ENUM_END_EVENT: usize = 165;
+
+    /**
+     * 1 byte length, 1 byte format Length is total length in bytes, including 2
+     * byte header Length values 0 and 1 are currently invalid and reserved.
+     */
+    pub const EXTRA_ROW_INFO_LEN_OFFSET: u8 = 0;
+    pub const EXTRA_ROW_INFO_FORMAT_OFFSET: u8 = 1;
+    pub const EXTRA_ROW_INFO_HDR_BYTES: u8 = 2;
+    pub const EXTRA_ROW_INFO_MAX_PAYLOAD: u8 = 255 - Event::EXTRA_ROW_INFO_HDR_BYTES;
+
+    // Events are without checksum though its generator
+    pub const BINLOG_CHECKSUM_ALG_OFF: u8 = 0;
+    // is checksum-capable New Master (NM).
+// CRC32 of zlib algorithm.
+    pub const BINLOG_CHECKSUM_ALG_CRC32: u8 = 1;
+    // the cut line: valid alg range is [1, 0x7f].
+    pub const BINLOG_CHECKSUM_ALG_ENUM_END: u8 = 2;
+    // special value to tag undetermined yet checksum
+    pub const BINLOG_CHECKSUM_ALG_UNDEF: u8 = 255;
+// or events from checksum-unaware servers
+
+    pub const CHECKSUM_CRC32_SIGNATURE_LEN: u8 = 4;
+    pub const BINLOG_CHECKSUM_ALG_DESC_LEN: u8 = 1;
+    /**
+     * defined statically while there is just one alg implemented
+     */
+    pub const BINLOG_CHECKSUM_LEN: u8 = Event::CHECKSUM_CRC32_SIGNATURE_LEN;
+
+    /* MySQL or old MariaDB slave with no announced capability. */
+    pub const MARIA_SLAVE_CAPABILITY_UNKNOWN: u8 = 0;
+
+    /* MariaDB >= 5.3, which understands ANNOTATE_ROWS_EVENT. */
+    pub const MARIA_SLAVE_CAPABILITY_ANNOTATE: u8 = 1;
+    /*
+     * MariaDB >= 5.5. This version has the capability to tolerate events
+     * omitted from the binlog stream without breaking replication (MySQL slaves
+     * fail because they mis-compute the offsets into the master's binlog).
+     */
+    pub const MARIA_SLAVE_CAPABILITY_TOLERATE_HOLES: u8 = 2;
+    /* MariaDB >= 10.0, which knows about binlog_checkpoint_log_event. */
+    pub const MARIA_SLAVE_CAPABILITY_BINLOG_CHECKPOINT: u8 = 3;
+    /* MariaDB >= 10.0.1, which knows about global transaction id events. */
+    pub const MARIA_SLAVE_CAPABILITY_GTID: u8 = 4;
+
+    /* Our capability. */
+    pub const MARIA_SLAVE_CAPABILITY_MINE: u8 = Event::MARIA_SLAVE_CAPABILITY_GTID;
+
+    /**
+     * For an event, 'e', carrying a type code, that a slave, 's', does not
+     * recognize, 's' will check 'e' for LOG_EVENT_IGNORABLE_F, and if the flag
+     * is set, then 'e' is ignored. Otherwise, 's' acknowledges that it has
+     * found an unknown event in the relay log.
+     */
+    pub const LOG_EVENT_IGNORABLE_F: u8 = 0x80;
+
+    /** enum_field_types */
+    pub const MYSQL_TYPE_DECIMAL: u8 = 0;
+    pub const MYSQL_TYPE_TINY: u8 = 1;
+    pub const MYSQL_TYPE_SHORT: u8 = 2;
+    pub const MYSQL_TYPE_LONG: u8 = 3;
+    pub const MYSQL_TYPE_FLOAT: u8 = 4;
+    pub const MYSQL_TYPE_DOUBLE: u8 = 5;
+    pub const MYSQL_TYPE_NULL: u8 = 6;
+    pub const MYSQL_TYPE_TIMESTAMP: u8 = 7;
+    pub const MYSQL_TYPE_LONGLONG: u8 = 8;
+    pub const MYSQL_TYPE_INT24: u8 = 9;
+    pub const MYSQL_TYPE_DATE: u8 = 10;
+    pub const MYSQL_TYPE_TIME: u8 = 11;
+    pub const MYSQL_TYPE_DATETIME: u8 = 12;
+    pub const MYSQL_TYPE_YEAR: u8 = 13;
+    pub const MYSQL_TYPE_NEWDATE: u8 = 14;
+    pub const MYSQL_TYPE_VARCHAR: u8 = 15;
+    pub const MYSQL_TYPE_BIT: u8 = 16;
+    pub const MYSQL_TYPE_TIMESTAMP2: u8 = 17;
+    pub const MYSQL_TYPE_DATETIME2: u8 = 18;
+    pub const MYSQL_TYPE_TIME2: u8 = 19;
+    pub const MYSQL_TYPE_TYPED_ARRAY: u8 = 20;
+    pub const MYSQL_TYPE_INVALID: u8 = 243;
+    pub const MYSQL_TYPE_BOOL: u8 = 244;
+    pub const MYSQL_TYPE_JSON: u8 = 245;
+    pub const MYSQL_TYPE_NEWDECIMAL: u8 = 246;
+    pub const MYSQL_TYPE_ENUM: u8 = 247;
+    pub const MYSQL_TYPE_SET: u8 = 248;
+    pub const MYSQL_TYPE_TINY_BLOB: u8 = 249;
+    pub const MYSQL_TYPE_MEDIUM_BLOB: u8 = 250;
+    pub const MYSQL_TYPE_LONG_BLOB: u8 = 251;
+    pub const MYSQL_TYPE_BLOB: u8 = 252;
+    pub const MYSQL_TYPE_VAR_STRING: u8 = 253;
+    pub const MYSQL_TYPE_STRING: u8 = 254;
+    pub const MYSQL_TYPE_GEOMETRY: u8 = 255;
+
     fn get_type_name(t: usize) -> String {
         match t {
-            START_EVENT_V3 => String::from("Start_v3"),
-            STOP_EVENT => String::from("Stop"),
-            QUERY_EVENT => String::from("Query"),
-            ROTATE_EVENT => String::from("Rotate"),
-            INTVAR_EVENT => String::from("Intvar"),
-            LOAD_EVENT => String::from("Load"),
-            NEW_LOAD_EVENT => String::from("New_load"),
-            SLAVE_EVENT => String::from("Slave"),
-            CREATE_FILE_EVENT => String::from("Create_file"),
-            APPEND_BLOCK_EVENT => String::from("Append_block"),
-            DELETE_FILE_EVENT => String::from("Delete_file"),
-            EXEC_LOAD_EVENT => String::from("Exec_load"),
-            RAND_EVENT => String::from("RAND"),
-            XID_EVENT => String::from("Xid"),
-            USER_VAR_EVENT => String::from("User var"),
-            FORMAT_DESCRIPTION_EVENT => String::from("Format_desc"),
-            TABLE_MAP_EVENT => String::from("Table_map"),
-            PRE_GA_WRITE_ROWS_EVENT => String::from("Write_rows_event_old"),
-
-            PRE_GA_UPDATE_ROWS_EVENT => String::from("Update_rows_event_old"),
-            PRE_GA_DELETE_ROWS_EVENT => String::from("Delete_rows_event_old"),
-            WRITE_ROWS_EVENT_V1 => String::from("Write_rows_v1"),
-            UPDATE_ROWS_EVENT_V1 => String::from("Update_rows_v1"),
-            DELETE_ROWS_EVENT_V1 => String::from("Delete_rows_v1"),
-            BEGIN_LOAD_QUERY_EVENT => String::from("Begin_load_query"),
-            EXECUTE_LOAD_QUERY_EVENT => String::from("Execute_load_query"),
-            INCIDENT_EVENT => String::from("Incident"),
-            HEARTBEAT_LOG_EVENT => String::from("Heartbeat"),
-            IGNORABLE_LOG_EVENT => String::from("Ignorable"),
-
-            ROWS_QUERY_LOG_EVENT => String::from("Rows_query"),
-            WRITE_ROWS_EVENT => String::from("Write_rows"),
-            UPDATE_ROWS_EVENT => String::from("Update_rows"),
-            DELETE_ROWS_EVENT => String::from("Delete_rows"),
-            GTID_LOG_EVENT => String::from("Gtid"),
-            ANONYMOUS_GTID_LOG_EVENT => String::from("Anonymous_Gtid"),
-            PREVIOUS_GTIDS_LOG_EVENT => String::from("Previous_gtids"),
-            PARTIAL_UPDATE_ROWS_EVENT => String::from("Update_rows_partial"),
-            TRANSACTION_CONTEXT_EVENT => String::from("Transaction_context"),
-            VIEW_CHANGE_EVENT => String::from("view_change"),
-            XA_PREPARE_LOG_EVENT => String::from("Xa_prepare"),
-            TRANSACTION_PAYLOAD_EVENT => String::from("transaction_payload"),
+            Self::START_EVENT_V3 => String::from("Start_v3"),
+            Self::STOP_EVENT => String::from("Stop"),
+            Self::QUERY_EVENT => String::from("Query"),
+            Self::ROTATE_EVENT => String::from("Rotate"),
+            Self::INTVAR_EVENT => String::from("Intvar"),
+            Self::LOAD_EVENT => String::from("Load"),
+            Self::NEW_LOAD_EVENT => String::from("New_load"),
+            Self::SLAVE_EVENT => String::from("Slave"),
+            Self::CREATE_FILE_EVENT => String::from("Create_file"),
+            Self::APPEND_BLOCK_EVENT => String::from("Append_block"),
+            Self::DELETE_FILE_EVENT => String::from("Delete_file"),
+            Self::EXEC_LOAD_EVENT => String::from("Exec_load"),
+            Self::RAND_EVENT => String::from("RAND"),
+            Self::XID_EVENT => String::from("Xid"),
+            Self::USER_VAR_EVENT => String::from("User var"),
+            Self::FORMAT_DESCRIPTION_EVENT => String::from("Format_desc"),
+            Self::TABLE_MAP_EVENT => String::from("Table_map"),
+            Self::PRE_GA_WRITE_ROWS_EVENT => String::from("Write_rows_event_old"),
+            Self::PRE_GA_UPDATE_ROWS_EVENT => String::from("Update_rows_event_old"),
+            Self::PRE_GA_DELETE_ROWS_EVENT => String::from("Delete_rows_event_old"),
+            Self::WRITE_ROWS_EVENT_V1 => String::from("Write_rows_v1"),
+            Self::UPDATE_ROWS_EVENT_V1 => String::from("Update_rows_v1"),
+            Self::DELETE_ROWS_EVENT_V1 => String::from("Delete_rows_v1"),
+            Self::BEGIN_LOAD_QUERY_EVENT => String::from("Begin_load_query"),
+            Self::EXECUTE_LOAD_QUERY_EVENT => String::from("Execute_load_query"),
+            Self::INCIDENT_EVENT => String::from("Incident"),
+            Self::HEARTBEAT_LOG_EVENT => String::from("Heartbeat"),
+            Self::IGNORABLE_LOG_EVENT => String::from("Ignorable"),
+            Self::ROWS_QUERY_LOG_EVENT => String::from("Rows_query"),
+            Self::WRITE_ROWS_EVENT => String::from("Write_rows"),
+            Self::UPDATE_ROWS_EVENT => String::from("Update_rows"),
+            Self::DELETE_ROWS_EVENT => String::from("Delete_rows"),
+            Self::GTID_LOG_EVENT => String::from("Gtid"),
+            Self::ANONYMOUS_GTID_LOG_EVENT => String::from("Anonymous_Gtid"),
+            Self::PREVIOUS_GTIDS_LOG_EVENT => String::from("Previous_gtids"),
+            Self::PARTIAL_UPDATE_ROWS_EVENT => String::from("Update_rows_partial"),
+            Self::TRANSACTION_CONTEXT_EVENT => String::from("Transaction_context"),
+            Self::VIEW_CHANGE_EVENT => String::from("view_change"),
+            Self::XA_PREPARE_LOG_EVENT => String::from("Xa_prepare"),
+            Self::TRANSACTION_PAYLOAD_EVENT => String::from("transaction_payload"),
             _ => format!("Unknown type=> {}", t)
         }
     }
@@ -657,9 +656,9 @@ impl CreateFileLogEvent {
         };
 
         let header_len = description_event.common_header_len;
-        let load_header_len = description_event.post_header_len[LOAD_EVENT - 1] as usize;
-        let create_file_header_len = description_event.post_header_len[CREATE_FILE_EVENT - 1] as usize;
-        let offset = if header.kind == LOAD_EVENT { load_header_len + header_len } else { header_len + load_header_len + create_file_header_len };
+        let load_header_len = description_event.post_header_len[Event::LOAD_EVENT - 1] as usize;
+        let create_file_header_len = description_event.post_header_len[Event::CREATE_FILE_EVENT - 1] as usize;
+        let offset = if header.kind == Event::LOAD_EVENT { load_header_len + header_len } else { header_len + load_header_len + create_file_header_len };
         event.load_log_event.copy_log_event(buffer, offset, description_event);
         if description_event.start_log_event_v3.binlog_version != 1 {
             event.filed_id = buffer.get_uint32_pos(header_len + load_header_len + Self::CF_FILE_ID_OFFSET).unwrap();
@@ -763,14 +762,14 @@ impl ExecuteLoadQueryLogEvent {
     const LOAD_DUP_ERROR: u8 = 0;
     const LOAD_DUP_IGNORE: u8 = Self::LOAD_DUP_ERROR + 1;
     const LOAD_DUP_REPLACE: u8 = Self::LOAD_DUP_IGNORE + 1;
-    const ELQ_FILE_ID_OFFSET: u8 = QUERY_HEADER_LEN;
+    const ELQ_FILE_ID_OFFSET: u8 = Event::QUERY_HEADER_LEN;
     const ELQ_FN_POS_START_OFFSET: u8 = Self::ELQ_FILE_ID_OFFSET + 4;
     const ELQ_FN_POS_END_OFFSET: u8 = Self::ELQ_FILE_ID_OFFSET + 8;
     const ELQ_DUP_HANDLING_OFFSET: u8 = Self::ELQ_FILE_ID_OFFSET + 12;
 
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> StringResult<Self> {
         let mut event = ExecuteLoadQueryLogEvent {
-            query_log_event: QueryLogEvent::from(header, buffer, description_event)?,
+            query_log_event: QueryLogEvent::from_hea(header, buffer, description_event)?,
             file_id: 0,
             fn_pos_start: 0,
             fn_pos_end: 0,
@@ -782,7 +781,7 @@ impl ExecuteLoadQueryLogEvent {
         event.dup_hand_ling = buffer.get_uint8()?;
         let len = event.query_log_event.query.as_ref().ok_or(String::from("query is empty"))?.len();
         if event.fn_pos_start > len || event.fn_pos_end > len || event.dup_hand_ling > Self::LOAD_DUP_REPLACE {
-            return Result::Err(format!("Invalid ExecuteLoadQueryLogEvent: fn_pos_start={}, fn_pos_end={}, dup_handling={}",
+            return Result::Err(format!("Invalid execute_load_query_log_event: fn_pos_start={}, fn_pos_end={}, dup_handling={}",
                                        event.fn_pos_start, event.fn_pos_end, event.dup_hand_ling));
         }
         Result::Ok(event)
@@ -829,7 +828,7 @@ impl FormatDescriptionLogEvent {
     pub const ST_SERVER_VER_LEN: usize = 50;
     pub const ST_BINLOG_VER_OFFSET: u8 = 0;
     pub const ST_SERVER_VER_OFFSET: u8 = 2;
-    pub const LOG_EVENT_TYPES: usize = (ENUM_END_EVENT - 1);
+    pub const LOG_EVENT_TYPES: usize = (Event::ENUM_END_EVENT - 1);
     pub const ST_COMMON_HEADER_LEN_OFFSET: u8 = (Self::ST_SERVER_VER_OFFSET + Self::ST_SERVER_VER_LEN as u8 + 4);
     pub const OLD_HEADER_LEN: u8 = 13;
     pub const LOG_EVENT_HEADER_LEN: usize = 19;
@@ -854,7 +853,7 @@ impl FormatDescriptionLogEvent {
     pub const ROWS_HEADER_LEN_V1: u8 = 8;
     pub const TABLE_MAP_HEADER_LEN: u8 = 8;
     pub const EXECUTE_LOAD_QUERY_EXTRA_HEADER_LEN: u8 = (4 + 4 + 4 + 1);
-    pub const EXECUTE_LOAD_QUERY_HEADER_LEN: u8 = (QUERY_HEADER_LEN + Self::EXECUTE_LOAD_QUERY_EXTRA_HEADER_LEN);
+    pub const EXECUTE_LOAD_QUERY_HEADER_LEN: u8 = (Event::QUERY_HEADER_LEN + Self::EXECUTE_LOAD_QUERY_EXTRA_HEADER_LEN);
     pub const INCIDENT_HEADER_LEN: u8 = 2;
     pub const HEARTBEAT_HEADER_LEN: u8 = 0;
     pub const IGNORABLE_HEADER_LEN: u8 = 0;
@@ -913,37 +912,37 @@ impl FormatDescriptionLogEvent {
             start_log_event_v3: StartLogEventV3::from_none(),
             common_header_len: 0,
             number_of_event_types: 0,
-            post_header_len: Box::from([0 as u8; ENUM_END_EVENT]),
+            post_header_len: Box::from([0 as u8; Event::ENUM_END_EVENT]),
             server_version_split: [0, 0, 0],
         };
 
         match binlog_version {
             4 => {
-                event.start_log_event_v3.server_version = Option::Some(SERVER_VERSION.to_string());
+                event.start_log_event_v3.server_version = Option::Some(Event::SERVER_VERSION.to_string());
                 event.common_header_len = Self::LOG_EVENT_HEADER_LEN;
                 event.number_of_event_types = Self::LOG_EVENT_TYPES;
-                event.post_header_len[START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
-                event.post_header_len[QUERY_EVENT - 1] = QUERY_HEADER_LEN;
-                event.post_header_len[STOP_EVENT - 1] = Self::STOP_HEADER_LEN;
-                event.post_header_len[ROTATE_EVENT - 1] = Self::ROTATE_HEADER_LEN;
-                event.post_header_len[INTVAR_EVENT - 1] = Self::INTVAR_HEADER_LEN;
-                event.post_header_len[LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
-                event.post_header_len[SLAVE_EVENT - 1] = Self::SLAVE_HEADER_LEN;
-                event.post_header_len[CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
-                event.post_header_len[APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
-                event.post_header_len[EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
-                event.post_header_len[DELETE_FILE_EVENT - 1] = Self::DELETE_FILE_HEADER_LEN as u8;
-                event.post_header_len[NEW_LOAD_EVENT - 1] = Self::NEW_LOAD_HEADER_LEN as u8;
-                event.post_header_len[RAND_EVENT - 1] = Self::RAND_HEADER_LEN;
-                event.post_header_len[USER_VAR_EVENT - 1] = Self::USER_VAR_HEADER_LEN;
-                event.post_header_len[FORMAT_DESCRIPTION_EVENT] = Self::FORMAT_DESCRIPTION_HEADER_LEN as u8;
-                event.post_header_len[XID_EVENT - 1] = Self::XID_HEADER_LEN;
-                event.post_header_len[BEGIN_LOAD_QUERY_EVENT - 1] = Self::BINLOG_CHECKPOINT_HEADER_LEN;
-                event.post_header_len[EXECUTE_LOAD_QUERY_EVENT - 1] = Self::EXECUTE_LOAD_QUERY_HEADER_LEN;
-                event.post_header_len[TABLE_MAP_EVENT - 1] = Self::TABLE_MAP_HEADER_LEN;
-                event.post_header_len[WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V1;
-                event.post_header_len[UPDATE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
-                event.post_header_len[DELETE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
+                event.post_header_len[Event::START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
+                event.post_header_len[Event::QUERY_EVENT - 1] = Event::QUERY_HEADER_LEN;
+                event.post_header_len[Event::STOP_EVENT - 1] = Self::STOP_HEADER_LEN;
+                event.post_header_len[Event::ROTATE_EVENT - 1] = Self::ROTATE_HEADER_LEN;
+                event.post_header_len[Event::INTVAR_EVENT - 1] = Self::INTVAR_HEADER_LEN;
+                event.post_header_len[Event::LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
+                event.post_header_len[Event::SLAVE_EVENT - 1] = Self::SLAVE_HEADER_LEN;
+                event.post_header_len[Event::CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
+                event.post_header_len[Event::APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
+                event.post_header_len[Event::EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
+                event.post_header_len[Event::DELETE_FILE_EVENT - 1] = Self::DELETE_FILE_HEADER_LEN as u8;
+                event.post_header_len[Event::NEW_LOAD_EVENT - 1] = Self::NEW_LOAD_HEADER_LEN as u8;
+                event.post_header_len[Event::RAND_EVENT - 1] = Self::RAND_HEADER_LEN;
+                event.post_header_len[Event::USER_VAR_EVENT - 1] = Self::USER_VAR_HEADER_LEN;
+                event.post_header_len[Event::FORMAT_DESCRIPTION_EVENT] = Self::FORMAT_DESCRIPTION_HEADER_LEN as u8;
+                event.post_header_len[Event::XID_EVENT - 1] = Self::XID_HEADER_LEN;
+                event.post_header_len[Event::BEGIN_LOAD_QUERY_EVENT - 1] = Self::BINLOG_CHECKPOINT_HEADER_LEN;
+                event.post_header_len[Event::EXECUTE_LOAD_QUERY_EVENT - 1] = Self::EXECUTE_LOAD_QUERY_HEADER_LEN;
+                event.post_header_len[Event::TABLE_MAP_EVENT - 1] = Self::TABLE_MAP_HEADER_LEN;
+                event.post_header_len[Event::WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V1;
+                event.post_header_len[Event::UPDATE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
+                event.post_header_len[Event::DELETE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
                 /*
                  * We here have the possibility to simulate a master of before
                  * we changed the table map id to be stored in 6 bytes: when it
@@ -954,51 +953,51 @@ impl FormatDescriptionLogEvent {
                  * Tomas Ulin first!), and the accompanying test
                  * (rpl_row_4_bytes) too.
                  */
-                event.post_header_len[HEARTBEAT_LOG_EVENT - 1] = 0;
-                event.post_header_len[IGNORABLE_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
-                event.post_header_len[ROWS_QUERY_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
-                event.post_header_len[WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
-                event.post_header_len[UPDATE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
-                event.post_header_len[DELETE_ROWS_EVENT- 1] = Self::ROWS_HEADER_LEN_V2;
-                event.post_header_len[GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
-                event.post_header_len[ANONYMOUS_GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
-                event.post_header_len[PREVIOUS_GTIDS_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
-                event.post_header_len[TRANSACTION_CONTEXT_EVENT - 1] = Self::TRANSACTION_CONTEXT_HEADER_LEN;
-                event.post_header_len[VIEW_CHANGE_EVENT - 1] = Self::VIEW_CHANGE_HEADER_LEN;
-                event.post_header_len[XA_PREPARE_LOG_EVENT - 1] = Self::XA_PREPARE_HEADER_LEN;
-                event.post_header_len[PARTIAL_UPDATE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
-                event.post_header_len[ANNOTATE_ROWS_EVENT - 1] = Self::ANNOTATE_ROWS_HEADER_LEN;
-                event.post_header_len[BINLOG_CHECKPOINT_EVENT - 1] = Self::BINLOG_CHECKPOINT_HEADER_LEN;
-                event.post_header_len[GTID_EVENT - 1] = Self::GTID_HEADER_LEN;
-                event.post_header_len[GTID_LIST_EVENT - 1] = Self::GTID_LIST_HEADER_LEN;
-                event.post_header_len[START_ENCRYPTION_EVENT - 1] = Self::START_ENCRYPTION_HEADER_LEN;
+                event.post_header_len[Event::HEARTBEAT_LOG_EVENT - 1] = 0;
+                event.post_header_len[Event::IGNORABLE_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
+                event.post_header_len[Event::ROWS_QUERY_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
+                event.post_header_len[Event::WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
+                event.post_header_len[Event::UPDATE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
+                event.post_header_len[Event::DELETE_ROWS_EVENT- 1] = Self::ROWS_HEADER_LEN_V2;
+                event.post_header_len[Event::GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
+                event.post_header_len[Event::ANONYMOUS_GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
+                event.post_header_len[Event::PREVIOUS_GTIDS_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
+                event.post_header_len[Event::TRANSACTION_CONTEXT_EVENT - 1] = Self::TRANSACTION_CONTEXT_HEADER_LEN;
+                event.post_header_len[Event::VIEW_CHANGE_EVENT - 1] = Self::VIEW_CHANGE_HEADER_LEN;
+                event.post_header_len[Event::XA_PREPARE_LOG_EVENT - 1] = Self::XA_PREPARE_HEADER_LEN;
+                event.post_header_len[Event::PARTIAL_UPDATE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
+                event.post_header_len[Event::ANNOTATE_ROWS_EVENT - 1] = Self::ANNOTATE_ROWS_HEADER_LEN;
+                event.post_header_len[Event::BINLOG_CHECKPOINT_EVENT - 1] = Self::BINLOG_CHECKPOINT_HEADER_LEN;
+                event.post_header_len[Event::GTID_EVENT - 1] = Self::GTID_HEADER_LEN;
+                event.post_header_len[Event::GTID_LIST_EVENT - 1] = Self::GTID_LIST_HEADER_LEN;
+                event.post_header_len[Event::START_ENCRYPTION_EVENT - 1] = Self::START_ENCRYPTION_HEADER_LEN;
             }
             3 => {
                 event.start_log_event_v3.server_version = Option::Some(String::from("4.0"));
                 event.common_header_len = Self::LOG_EVENT_MINIMAL_HEADER_LEN as usize;
-                event.number_of_event_types = FORMAT_DESCRIPTION_EVENT - 1;
-                event.post_header_len[START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
-                event.post_header_len[QUERY_EVENT - 1] = QUERY_HEADER_MINIMAL_LEN;
-                event.post_header_len[ROTATE_EVENT - 1] = Self::ROTATE_HEADER_LEN;
-                event.post_header_len[LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
-                event.post_header_len[CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
-                event.post_header_len[APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
-                event.post_header_len[EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
-                event.post_header_len[DELETE_FILE_EVENT - 1] = Self::DELETE_FILE_HEADER_LEN as u8;
-                event.post_header_len[NEW_LOAD_EVENT - 1] = event.post_header_len[LOAD_EVENT - 1];
+                event.number_of_event_types = Event::FORMAT_DESCRIPTION_EVENT - 1;
+                event.post_header_len[Event::START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
+                event.post_header_len[Event::QUERY_EVENT - 1] = Event::QUERY_HEADER_MINIMAL_LEN;
+                event.post_header_len[Event::ROTATE_EVENT - 1] = Self::ROTATE_HEADER_LEN;
+                event.post_header_len[Event::LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
+                event.post_header_len[Event::CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
+                event.post_header_len[Event::APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
+                event.post_header_len[Event::EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
+                event.post_header_len[Event::DELETE_FILE_EVENT - 1] = Self::DELETE_FILE_HEADER_LEN as u8;
+                event.post_header_len[Event::NEW_LOAD_EVENT - 1] = event.post_header_len[Event::LOAD_EVENT - 1];
             }
             1 => {
                 event.start_log_event_v3.server_version = Option::Some(String::from("3.23"));
                 event.common_header_len = Self::OLD_HEADER_LEN as usize;
-                event.number_of_event_types = FORMAT_DESCRIPTION_EVENT - 1;
-                event.post_header_len[START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
-                event.post_header_len[QUERY_EVENT - 1] = QUERY_HEADER_MINIMAL_LEN as u8;
-                event.post_header_len[LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
-                event.post_header_len[CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
-                event.post_header_len[APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
-                event.post_header_len[EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
-                event.post_header_len[DELETE_FILE_EVENT - 1] = Self::DELETE_FILE_HEADER_LEN as u8;
-                event.post_header_len[NEW_LOAD_EVENT - 1] = event.post_header_len[LOAD_EVENT - 1];
+                event.number_of_event_types = Event::FORMAT_DESCRIPTION_EVENT - 1;
+                event.post_header_len[Event::START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
+                event.post_header_len[Event::QUERY_EVENT - 1] = Event::QUERY_HEADER_MINIMAL_LEN as u8;
+                event.post_header_len[Event::LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
+                event.post_header_len[Event::CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
+                event.post_header_len[Event::APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
+                event.post_header_len[Event::EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
+                event.post_header_len[Event::DELETE_FILE_EVENT - 1] = Self::DELETE_FILE_HEADER_LEN as u8;
+                event.post_header_len[Event::NEW_LOAD_EVENT - 1] = event.post_header_len[Event::LOAD_EVENT - 1];
             }
             _ => {
                 event.number_of_event_types = 0;
@@ -1245,7 +1244,7 @@ impl InvarianceLogEvent {
         };
         event.event.header = header.clone();
 
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[INTVAR_EVENT - 1] as usize + Self::I_TYPE_OFFSET).unwrap();
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[Event::INTVAR_EVENT - 1] as usize + Self::I_TYPE_OFFSET).unwrap();
         event.kind = buffer.get_int8().ok()?;
         event.value = buffer.get_int64().ok()?;
 
@@ -1310,7 +1309,7 @@ impl LoadLogEvent {
         };
         event.event.from(header.clone());
         let load_header_len = FormatDescriptionLogEvent::LOAD_HEADER_LEN;
-        let body_offset = if event.event.header.kind == LOAD_EVENT { load_header_len + description_event.common_header_len } else { load_header_len + FormatDescriptionLogEvent::LOG_EVENT_HEADER_LEN };
+        let body_offset = if event.event.header.kind == Event::LOAD_EVENT { load_header_len + description_event.common_header_len } else { load_header_len + FormatDescriptionLogEvent::LOG_EVENT_HEADER_LEN };
         event.copy_log_event(buffer, body_offset, description_event);
         Option::Some(event)
     }
@@ -1324,7 +1323,7 @@ impl LoadLogEvent {
         self.num_fields = buffer.get_uint32().unwrap();
         buffer.up_position(body_offset).unwrap();
 
-        if self.event.header.kind != LOAD_EVENT {
+        if self.event.header.kind != Event::LOAD_EVENT {
             self.field_term = buffer.get_string().unwrap();
             self.enclosed = buffer.get_string().unwrap();
             self.line_term = buffer.get_string().unwrap();
@@ -1398,6 +1397,34 @@ pub struct QueryLogEvent {
     charset_name: Option<String>,
     time_zone: Option<String>,
 }
+
+impl Clone for QueryLogEvent{
+    fn clone(&self) -> Self {
+        Self {
+            event: self.event.clone(),
+            user: self.user.clone(),
+            host: self.host.clone(),
+            query: self.query.clone(),
+            catalog: self.catalog.clone(),
+            dbname: self.dbname.clone(),
+            exec_time: self.exec_time,
+            error_code: self.error_code,
+            session_id: self.session_id,
+            flags2: self.flags2,
+            sql_mode: self.sql_mode,
+            auto_increment_increment: self.auto_increment_increment,
+            auto_increment_offset: self.auto_increment_offset,
+            client_charset: self.client_charset,
+            client_collation: self.client_collation,
+            server_collation: self.server_collation,
+            tv_sec: self.tv_sec,
+            ddl_xid: self.ddl_xid,
+            charset_name: self.charset_name.clone(),
+            time_zone: self.time_zone.clone()
+        }
+    }
+}
+
 
 impl QueryLogEvent {
     /**
@@ -1506,7 +1533,7 @@ impl QueryLogEvent {
     const Q_DB_LEN_OFFSET: u8 = 8;
     const Q_ERR_CODE_OFFSET: u8 = 9;
     const Q_STATUS_VARS_LEN_OFFSET: u8 = 11;
-    const Q_DATA_OFFSET: u8 = QUERY_HEADER_LEN;
+    const Q_DATA_OFFSET: u8 = Event::QUERY_HEADER_LEN;
     const Q_FLAGS2_CODE: u8 = 0;
     const Q_SQL_MODE_CODE: u8 = 1;
     const Q_CATALOG_CODE: u8 = 2;
@@ -1530,7 +1557,7 @@ impl QueryLogEvent {
     const Q_HRNOW: u8 = 128;
 
 
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<Self, String> {
+    pub fn from_hea(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<Self, String> {
         let mut event = QueryLogEvent {
             event: Event::new(),
             user: None,
@@ -1579,7 +1606,7 @@ impl QueryLogEvent {
          * length:
          */
         let mut status_vars_len = 0;
-        if post_header_len > QUERY_HEADER_MINIMAL_LEN as usize {
+        if post_header_len > Event::QUERY_HEADER_MINIMAL_LEN as usize {
             status_vars_len = buffer.get_uint16().unwrap() as usize;
             /*
              * Check if status variable length is corrupt and will lead to very
@@ -1669,9 +1696,9 @@ impl QueryLogEvent {
                 QueryLogEvent::Q_MICROSECONDS =>
                     event.tv_sec = buffer.get_int24().unwrap(),
                 QueryLogEvent::Q_UPDATED_DB_NAMES => {
-                    let mut mts_accessed_dbs = buffer.get_uint8().unwrap();
+                    let mts_accessed_dbs = buffer.get_uint8().unwrap();
                     if mts_accessed_dbs > QueryLogEvent::MAX_DBS_IN_EVENT_MTS {
-                        mts_accessed_dbs = QueryLogEvent::OVER_MAX_DBS_IN_EVENT_MTS;
+                        // mts_accessed_dbs = QueryLogEvent::OVER_MAX_DBS_IN_EVENT_MTS;
                         break;
                     }
                     let mut mts_accessed_db_names = vec![];
@@ -1811,7 +1838,7 @@ impl RandLogEvent {
             seed2: 0,
         };
         event.event.header = header.clone();
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[RAND_EVENT - 1] as usize).unwrap();
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[Event::RAND_EVENT - 1] as usize).unwrap();
         event.seed1 = buffer.get_int64().ok()?;
         event.seed2 = buffer.get_int64().ok()?;
         Option::Some(event)
@@ -1840,7 +1867,7 @@ impl RotateLogEvent {
         };
         event.event.header = header.clone();
         let common_header_len = description_event.common_header_len;
-        let post_header_len = description_event.post_header_len[ROTATE_EVENT - 1] as usize;
+        let post_header_len = description_event.post_header_len[Event::ROTATE_EVENT - 1] as usize;
 
         buffer.up_position(common_header_len + Self::R_POS_OFFSET).unwrap();
 
@@ -1937,9 +1964,9 @@ impl RowsLogEvent {
                 i += 1;
                 match result {
                     RowsLogEvent::RW_V_EXTRAINFO_TAG => {
-                        buffer.up_position(i + EXTRA_ROW_INFO_LEN_OFFSET as usize).unwrap();
+                        buffer.up_position(i + Event::EXTRA_ROW_INFO_LEN_OFFSET as usize).unwrap();
                         let check_len = buffer.get_uint8().unwrap();
-                        let val = check_len - EXTRA_ROW_INFO_HDR_BYTES;// EXTRA_ROW_INFO_LEN_OFFSET
+                        let val = check_len - Event::EXTRA_ROW_INFO_HDR_BYTES;// EXTRA_ROW_INFO_LEN_OFFSET
                         assert_eq!(buffer.get_uint8().unwrap(), val);
                         let mut j = 0;
                         while j < val {
@@ -1956,8 +1983,8 @@ impl RowsLogEvent {
         event.column_len = buffer.get_packed_i64() as usize;
         event.partial = partial;
         event.columns = buffer.get_bit_map(event.column_len);
-        if header.kind == UPDATE_ROWS_EVENT_V1 || header.kind == UPDATE_ROWS_EVENT
-            || header.kind == PARTIAL_UPDATE_ROWS_EVENT {
+        if header.kind == Event::UPDATE_ROWS_EVENT_V1 || header.kind == Event::UPDATE_ROWS_EVENT
+            || header.kind == Event::PARTIAL_UPDATE_ROWS_EVENT {
             event.change_columns = buffer.get_bit_map(event.column_len);
         } else {
             event.change_columns = event.columns.clone();
@@ -1983,7 +2010,7 @@ impl RowsLogEvent {
         while i < column_cnt {
             let info = column_info.get(i).unwrap();
 
-            if info.kind == MYSQL_TYPE_JSON {
+            if info.kind == Event::MYSQL_TYPE_JSON {
                 json_column_count += 1;
             }
             self.json_column_count = json_column_count;
@@ -2072,7 +2099,7 @@ impl StartLogEventV3 {
             binlog_version: 0,
             server_version: None,
         };
-        event.event.header = LogHeader::from_kind(START_EVENT_V3);
+        event.event.header = LogHeader::from_kind(Event::START_EVENT_V3);
         event
     }
 
@@ -2097,7 +2124,7 @@ pub struct StopLogEvent {
 }
 
 impl StopLogEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+    pub fn from(header: &LogHeader, _buffer: &mut LogBuffer, _description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = StopLogEvent {
             event: Event::new()
         };
@@ -2267,36 +2294,36 @@ impl TableMapLogEvent {
         while i < event.column_cnt as usize {
             let info = &mut event.column_info[i];
             let mut binlog_type = info.kind;
-            if binlog_type == MYSQL_TYPE_TYPED_ARRAY {
+            if binlog_type == Event::MYSQL_TYPE_TYPED_ARRAY {
                 binlog_type = buffer.get_uint8().unwrap();
             }
 
             match binlog_type {
-                MYSQL_TYPE_TINY_BLOB |
-                MYSQL_TYPE_BLOB |
-                MYSQL_TYPE_MEDIUM_BLOB |
-                MYSQL_TYPE_LONG_BLOB |
-                MYSQL_TYPE_DOUBLE |
-                MYSQL_TYPE_FLOAT |
-                MYSQL_TYPE_GEOMETRY |
-                MYSQL_TYPE_TIME2 |
-                MYSQL_TYPE_DATETIME2 |
-                MYSQL_TYPE_TIMESTAMP2 |
-                MYSQL_TYPE_JSON => {
+                Event::MYSQL_TYPE_TINY_BLOB |
+                Event::MYSQL_TYPE_BLOB |
+                Event::MYSQL_TYPE_MEDIUM_BLOB |
+                Event::MYSQL_TYPE_LONG_BLOB |
+                Event::MYSQL_TYPE_DOUBLE |
+                Event::MYSQL_TYPE_FLOAT |
+                Event::MYSQL_TYPE_GEOMETRY |
+                Event::MYSQL_TYPE_TIME2 |
+                Event::MYSQL_TYPE_DATETIME2 |
+                Event::MYSQL_TYPE_TIMESTAMP2 |
+                Event::MYSQL_TYPE_JSON => {
                     info.meta = buffer.get_uint8().unwrap() as u16;
                 }
-                MYSQL_TYPE_SET |
-                MYSQL_TYPE_ENUM |
-                MYSQL_TYPE_STRING |
-                MYSQL_TYPE_NEWDECIMAL => {
+                Event::MYSQL_TYPE_SET |
+                Event::MYSQL_TYPE_ENUM |
+                Event::MYSQL_TYPE_STRING |
+                Event::MYSQL_TYPE_NEWDECIMAL => {
                     let mut x = (buffer.get_uint8().unwrap() as u16) << 8;
                     x += buffer.get_uint8().unwrap() as u16;
                     info.meta = x;
                 }
-                MYSQL_TYPE_BIT => {
+                Event::MYSQL_TYPE_BIT => {
                     info.meta = buffer.get_uint16().unwrap();
                 }
-                MYSQL_TYPE_VARCHAR => {
+                Event::MYSQL_TYPE_VARCHAR => {
                     info.meta = buffer.get_uint16().unwrap();
                 }
                 _ => {
@@ -2404,11 +2431,11 @@ impl TableMapLogEvent {
         let mut index = 0;
         let mut i = 0;
         while i < event.column_cnt as usize {
-            if set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == MYSQL_TYPE_SET {
+            if set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == Event::MYSQL_TYPE_SET {
                 event.column_info[i].set_enum_values = datas[index].clone();
                 index += 1;
             }
-            if !set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == MYSQL_TYPE_ENUM {
+            if !set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == Event::MYSQL_TYPE_ENUM {
                 event.column_info[i].set_enum_values = datas[index].clone();
                 index += 1;
             }
@@ -2427,7 +2454,7 @@ impl TableMapLogEvent {
         let mut i = 0;
 
         while i < event.column_cnt as usize {
-            if event.column_info[i].kind == MYSQL_TYPE_GEOMETRY {
+            if event.column_info[i].kind == Event::MYSQL_TYPE_GEOMETRY {
                 event.column_info[i].geo_type = datas[index];
                 index += 1;
             }
@@ -2452,46 +2479,46 @@ impl TableMapLogEvent {
         while buffer.has_remaining() && buffer.position() < limit {
             let col_index = buffer.get_packed_i64() as usize;
             // prefix length, 比如 char(32)
-            let col_prefix = buffer.get_packed_i64();
+            let _col_prefix = buffer.get_packed_i64();
             event.column_info[col_index].pk = true;
         }
     }
 
     fn is_numeric_type(kind: u8) -> bool {
         match kind {
-            MYSQL_TYPE_TINY |
-            MYSQL_TYPE_SHORT |
-            MYSQL_TYPE_INT24 |
-            MYSQL_TYPE_LONG |
-            MYSQL_TYPE_LONGLONG |
-            MYSQL_TYPE_NEWDECIMAL |
-            MYSQL_TYPE_FLOAT |
-            MYSQL_TYPE_DOUBLE => true,
+            Event::MYSQL_TYPE_TINY |
+            Event::MYSQL_TYPE_SHORT |
+            Event::MYSQL_TYPE_INT24 |
+            Event::MYSQL_TYPE_LONG |
+            Event::MYSQL_TYPE_LONGLONG |
+            Event::MYSQL_TYPE_NEWDECIMAL |
+            Event::MYSQL_TYPE_FLOAT |
+            Event::MYSQL_TYPE_DOUBLE => true,
             _ => false
         }
     }
 
     fn is_character_type(kind: u8) -> bool {
         match kind {
-            MYSQL_TYPE_STRING |
-            MYSQL_TYPE_VAR_STRING |
-            MYSQL_TYPE_VARCHAR |
-            MYSQL_TYPE_BLOB => true,
+            Event::MYSQL_TYPE_STRING |
+            Event::MYSQL_TYPE_VAR_STRING |
+            Event::MYSQL_TYPE_VARCHAR |
+            Event::MYSQL_TYPE_BLOB => true,
             _ => false
         }
     }
 
     fn get_real_type(mut kind: u8, meta: u16) -> u8 {
-        if kind == MYSQL_TYPE_STRING {
+        if kind == Event::MYSQL_TYPE_STRING {
             if meta >= 256 {
                 let byte0 = (meta >> 8) as u8;
                 if byte0 & 0x30 != 0x30 {
                     kind = byte0 | 0x30;
                 } else {
                     match byte0 {
-                        MYSQL_TYPE_SET |
-                        MYSQL_TYPE_ENUM |
-                        MYSQL_TYPE_STRING => kind = byte0,
+                        Event::MYSQL_TYPE_SET |
+                        Event::MYSQL_TYPE_ENUM |
+                        Event::MYSQL_TYPE_STRING => kind = byte0,
                         _ => {}
                     }
                 }
@@ -2646,7 +2673,7 @@ pub struct TransactionContextLogEvent {
 }
 
 impl TransactionContextLogEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+    pub fn from(header: &LogHeader, _buffer: &mut LogBuffer, _description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = TransactionContextLogEvent {
             event: Event::new(),
         };
@@ -2660,7 +2687,7 @@ pub struct TransactionPayloadLogEvent {
 }
 
 impl TransactionPayloadLogEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+    pub fn from(header: &LogHeader, _buffer: &mut LogBuffer, _description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = TransactionPayloadLogEvent {
             event: Event::new(),
         };
@@ -2741,7 +2768,8 @@ impl UserVarLogEvent {
             charset_number: 0,
             is_null: false,
         };
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[USER_VAR_EVENT - 1] as usize);
+        event.event.header = header.clone();
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[Event::USER_VAR_EVENT - 1] as usize);
         let name_len = buffer.get_uint32().ok()? as usize;
         event.name = buffer.get_fix_string_len(name_len);
         event.is_null = 0 != buffer.get_int8().ok()?;
@@ -2823,7 +2851,7 @@ pub struct ViewChangeEvent {
 }
 
 impl ViewChangeEvent {
-    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
+    pub fn from(header: &LogHeader, _buffer: &mut LogBuffer, _description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = ViewChangeEvent {
             event: Event::new(),
         };
@@ -2923,11 +2951,12 @@ pub struct XidLogEvent {
 impl XidLogEvent {
 
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
-        let event = XidLogEvent {
+        let mut event = XidLogEvent {
             event: Event::new(),
             xid: 0
         };
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[XID_EVENT -1] as usize);
+        event.event.header = header.clone();
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[Event::XID_EVENT -1] as usize);
         Option::Some(event)
     }
 
@@ -2953,7 +2982,6 @@ pub enum LogEvent {
     IncidentLog(IncidentLogEvent),
     InvarianceLog(InvarianceLogEvent),
     LoadLog(LoadLogEvent),
-    // LogEvent(LogEventHeader),
     PreviousGtidsLog(PreviousGtidsLogEvent),
     QueryLog(QueryLogEvent),
     RandLog(RandLogEvent),
@@ -2973,6 +3001,196 @@ pub enum LogEvent {
     WriteRowsLog(WriteRowsLogEvent),
     XaPrepareLog(XaPrepareLogEvent),
     XidLog(XidLogEvent),
+}
+
+
+impl LogEvent {
+    pub fn rows_log_event(&self) -> Option<&RowsLogEvent>{
+        match self {
+            LogEvent::RowsLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn rand_log_event(&self) -> Option<&RandLogEvent>{
+        match self {
+            LogEvent::RandLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn query_log_event(&self) -> Option<&QueryLogEvent>{
+        match self {
+            LogEvent::QueryLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn previous_gtids_log_event(&self) -> Option<&PreviousGtidsLogEvent>{
+        match self {
+            LogEvent::PreviousGtidsLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn load_log_event(&self) -> Option<&LoadLogEvent>{
+        match self {
+            LogEvent::LoadLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn incident_log_event(&self) -> Option<&IncidentLogEvent>{
+        match self {
+            LogEvent::IncidentLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn ignorable_log_event(&self) -> Option<&IgnorableLogEvent>{
+        match self {
+            LogEvent::IgnorableLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+
+    pub fn heartbeat_log_event(&self) -> Option<&HeartbeatLogEvent>{
+        match self {
+            LogEvent::HeartbeatLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+    pub fn gtid_log_event(&self) -> Option<&GtidLogEvent>{
+        match self {
+            LogEvent::GtidLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn format_description_log_event(&self) -> Option<&FormatDescriptionLogEvent>{
+        match self {
+            LogEvent::FormatDescriptionLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn execute_load_query_log_event(&self) -> Option<&ExecuteLoadQueryLogEvent>{
+        match self {
+            LogEvent::ExecuteLoadQueryLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn execute_load_log_event(&self) -> Option<&ExecuteLoadLogEvent>{
+        match self {
+            LogEvent::ExecuteLoadLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn delete_rows_log_event(&self) -> Option<&DeleteRowsLogEvent>{
+        match self {
+            LogEvent::DeleteRowsLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn delete_file_log_event(&self) -> Option<&DeleteFileLogEvent>{
+        match self {
+            LogEvent::DeleteFileLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn create_file_log_event(&self) -> Option<&CreateFileLogEvent>{
+        match self {
+            LogEvent::CreateFileLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn begin_load_query_log_event(&self) -> Option<&BeginLoadQueryLogEvent>{
+        match self {
+            LogEvent::BeginLoadQueryLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
+
+    pub fn append_block_log_event(&self) -> Option<&AppendBlockLogEvent>{
+        match self {
+            LogEvent::AppendBlockLog(e)=> {
+                Option::Some(e)
+            }
+            _ =>{
+                Option::None
+            }
+        }
+    }
 }
 
 impl LogEvent {
@@ -3198,6 +3416,8 @@ impl LogEvent {
         }
     }
 }
+
+
 #[derive(Debug)]
 pub struct LogContext {
     map_table: HashMap<u64, TableMapLogEvent>,
@@ -3216,7 +3436,7 @@ impl LogContext {
     }
 
     pub fn from(description_event: &FormatDescriptionLogEvent) -> Self {
-        let mut context = LogContext {
+        let context = LogContext {
             map_table: Default::default(),
             description_event: (*description_event).clone(),
             position: LogPosition::new(),

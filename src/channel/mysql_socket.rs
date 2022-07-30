@@ -3,13 +3,13 @@ use std::str::{from_utf8};
 use crate::channel::{TcpChannel, TcpSocketChannel};
 use crate::channel::read_write_packet::{*};
 use crate::channel::sql_utils::{MysqlQueryExecutor, MysqlUpdateExecutor};
-use crate::command::{event, msc, Packet, write_header_and_body};
+use crate::command::{msc, Packet, write_header_and_body};
 use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
 use crate::command::decoder::LogDecoder;
-use crate::command::event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, ENUM_END_EVENT, FormatDescriptionLogEvent, LogContext, MARIA_SLAVE_CAPABILITY_MINE, UNKNOWN_EVENT};
-use crate::instance::log_buffer::DirectLogFetcher;
+use crate::command::event::{Event, FormatDescriptionLogEvent, LogContext};
+use crate::log::log_buffer::DirectLogFetcher;
 use crate::parse::support::AuthenticationInfo;
 
 
@@ -358,7 +358,7 @@ enum BinlogImage {
     None,
 }
 
-const BINLOG_CHECKSUM: u32 = event::BINLOG_CHECKSUM_ALG_OFF as u32;
+const BINLOG_CHECKSUM: u32 = Event::BINLOG_CHECKSUM_ALG_OFF as u32;
 
 pub struct MysqlConnection {
     connector: MysqlConnector,
@@ -417,11 +417,11 @@ impl MysqlConnection {
         Self {
             connector: MysqlConnector::new(),
             slave_id: 0,
-            binlog_format: BinlogFormat::None,
-            binlog_image: BinlogImage::None,
+            binlog_format: BinlogFormat::ROW,
+            binlog_image: BinlogImage::FULL,
             auth_info: AuthenticationInfo::new(),
             received_binlog_bytes: Default::default(),
-            binlog_checksum: BINLOG_CHECKSUM_ALG_OFF,
+            binlog_checksum: Event::BINLOG_CHECKSUM_ALG_OFF,
         }
     }
 
@@ -451,7 +451,7 @@ impl MysqlConnection {
         let channel = &mut self.connector.channel.as_mut().unwrap();
         fetcher.start(Option::Some(channel));
 
-        let decoder = LogDecoder::from(UNKNOWN_EVENT as usize, ENUM_END_EVENT);
+        let decoder = LogDecoder::from(Event::UNKNOWN_EVENT as usize, Event::ENUM_END_EVENT);
         let mut context = LogContext::new();
         context.set_description_event(FormatDescriptionLogEvent::from_binlog_version_binlog_check_sum(4, self.binlog_checksum));
         while fetcher.fetch().unwrap() {
@@ -473,7 +473,7 @@ impl MysqlConnection {
         self.update("set names 'binary'");
         self.update("set @master_binlog_checksum= @@global.binlog_checksum");
         self.update("set @slave_uuid=uuid()");
-        self.update(format!("SET @mariadb_slave_capability= '{}'", MARIA_SLAVE_CAPABILITY_MINE).as_str());
+        self.update(format!("SET @mariadb_slave_capability= '{}'", Event::MARIA_SLAVE_CAPABILITY_MINE).as_str());
         self.update(format!("SET @master_heartbeat_period=  '{}'", DirectLogFetcher::MASTER_HEARTBEAT_PERIOD_NANOSECOND).as_str());
     }
 
@@ -483,9 +483,9 @@ impl MysqlConnection {
         let col_values = packet.field_values();
         if col_values.len() >= 1 && col_values.get(0).unwrap().len() != 0
             && col_values.get(0).unwrap().to_ascii_uppercase().eq("CRC32") {
-            self.binlog_checksum = BINLOG_CHECKSUM_ALG_CRC32
+            self.binlog_checksum = Event::BINLOG_CHECKSUM_ALG_CRC32
         } else {
-            self.binlog_checksum = BINLOG_CHECKSUM_ALG_OFF
+            self.binlog_checksum = Event::BINLOG_CHECKSUM_ALG_OFF
         }
     }
 
