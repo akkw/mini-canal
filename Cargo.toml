@@ -1,5 +1,5 @@
 [package]
-name = "mysql_binlog_parse"
+name = "mini-canal"
 version = "0.1.0"
 edition = "2021"
 

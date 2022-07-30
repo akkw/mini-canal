@@ -1360,48 +1360,6 @@ impl LoadLogEvent {
     }
 }
 
-// pub struct LogEventHeader {
-//     table: Option<String>,
-//     db: Option<String>,
-//     fname: Option<String>,
-//     skip_lines: i32,
-//     num_fields: i32,
-//     fields: Option<Vec<String>>,
-//     field_term: Option<String>,
-//     line_term: Option<String>,
-//     line_start: Option<String>,
-//     enclosed: Option<String>,
-//     escaped: Option<String>,
-//     opt_flags: Option<String>,
-//     empty_flags: Option<String>,
-//     exec_time: Option<String>,
-// }
-//
-//
-// impl LogEventHeader {
-//     const L_THREAD_ID_OFFSET :usize = 0;
-//     const L_EXEC_TIME_OFFSET :usize = 4;
-//     const L_SKIP_LINES_OFFSET:usize = 8;
-//     const L_TBL_LEN_OFFSET   :usize = 12;
-//     const L_DB_LEN_OFFSET    :usize = 13;
-//     const L_NUM_FIELDS_OFFSET:usize = 14;
-//     const L_SQL_EX_OFFSET    :usize = 18;
-//     const L_DATA_OFFSET      :usize = FormatDescriptionLogEvent::LOAD_HEADER_LEN;
-//
-//
-//     const DUMPFILE_FLAG      :u8 = 0x1;
-//     const OPT_ENCLOSED_FLAG  :u8 = 0x2;
-//     const REPLACE_FLAG       :u8 = 0x4;
-//     const IGNORE_FLAG        :u8 = 0x8;
-//     const FIELD_TERM_EMPTY   :u8 = 0x1;
-//     const ENCLOSED_EMPTY     :u8 = 0x2;
-//     const LINE_TERM_EMPTY    :u8 = 0x4;
-//     const LINE_START_EMPTY   :u8 = 0x8;
-//     const ESCAPED_EMPTY      :u8 = 0x10;
-//
-//
-//
-// }
 #[derive(Debug)]
 pub struct PreviousGtidsLogEvent {
     event: Event,

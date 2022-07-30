@@ -1,7 +1,7 @@
 use bit_set::BitSet;
-use mysql_binlog_parse::instance::metadata::EntryPosition;
-use mysql_binlog_parse::instance::running::MysqlEventParser;
-use mysql_binlog_parse::parse::support::AuthenticationInfo;
+use mini_canal::instance::metadata::EntryPosition;
+use mini_canal::instance::running::MysqlEventParser;
+use mini_canal::parse::support::AuthenticationInfo;
 fn main() {
     let info = AuthenticationInfo::form(String::from("127.0.0.1"),
                                         3306,
