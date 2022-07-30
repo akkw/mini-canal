@@ -1,5 +1,6 @@
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddrV4, TcpStream};
+use std::net::IpAddr::V4;
 use std::str::FromStr;
 use chrono::Local;
 
@@ -103,9 +104,11 @@ impl TcpSocketChannel for TcpChannel {
         match addr {
             Some(addr) => {
                 let ip = addr.ip();
-                let ip_byte = ip.to_string();
-                let ip_byte = ip_byte.as_bytes();
-                Option::from(SocketAddrV4::new(Ipv4Addr::new(ip_byte[0], ip_byte[1], ip_byte[2], ip_byte[3]), addr.port()))
+                if let V4(address) = ip{
+                   return Option::from(SocketAddrV4::new( address, addr.port()));
+                } else {
+                    Option::None
+                }
             }
             None => {
                 Option::None

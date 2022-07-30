@@ -180,7 +180,8 @@ impl LogDecoder {
             }
             FORMAT_DESCRIPTION_EVENT => {
                 let description_event = FormatDescriptionLogEvent::from(header, buffer, context.description_event()).unwrap();
-                context.set_description_event(description_event);
+                context.set_description_event(description_event.clone());
+                return LogEvent::FormatDescriptionLog(description_event)
             }
             PRE_GA_WRITE_ROWS_EVENT |
             PRE_GA_UPDATE_ROWS_EVENT |

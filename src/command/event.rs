@@ -815,7 +815,7 @@ pub struct FormatDescriptionLogEvent {
 impl Clone for FormatDescriptionLogEvent {
     fn clone(&self) -> Self {
         FormatDescriptionLogEvent {
-            start_log_event_v3: StartLogEventV3::new(),
+            start_log_event_v3: self.start_log_event_v3.clone(),
             common_header_len: self.common_header_len,
             number_of_event_types: self.number_of_event_types,
             post_header_len: self.post_header_len.clone(),
@@ -900,7 +900,6 @@ impl FormatDescriptionLogEvent {
             event.number_of_event_types -= FormatDescriptionLogEvent::BINLOG_CHECKSUM_ALG_DESC_LEN as usize;
         }
 
-        println!("common_header_len: {} , number_of_event_types:{} ", event.common_header_len, event.number_of_event_types);
         Result::Ok(event)
     }
 
@@ -973,9 +972,6 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[GTID_EVENT - 1] = Self::GTID_HEADER_LEN;
                 event.post_header_len[GTID_LIST_EVENT - 1] = Self::GTID_LIST_HEADER_LEN;
                 event.post_header_len[START_ENCRYPTION_EVENT - 1] = Self::START_ENCRYPTION_HEADER_LEN;
-                for i in 0..event.post_header_len.len() {
-                    println!("{}", event.post_header_len[i] )
-                }
             }
             3 => {
                 event.start_log_event_v3.server_version = Option::Some(String::from("4.0"));
@@ -2079,6 +2075,16 @@ pub struct StartLogEventV3 {
     event: Event,
     binlog_version: u16,
     server_version: Option<String>,
+}
+
+impl Clone for StartLogEventV3 {
+    fn clone(&self) -> Self {
+        Self {
+            event: self.event.clone(),
+            binlog_version: self.binlog_version,
+            server_version: self.server_version.clone()
+        }
+    }
 }
 
 impl StartLogEventV3 {

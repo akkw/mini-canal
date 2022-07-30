@@ -474,6 +474,7 @@ impl MysqlConnection {
         self.update("set @master_binlog_checksum= @@global.binlog_checksum");
         self.update("set @slave_uuid=uuid()");
         self.update(format!("SET @mariadb_slave_capability= '{}'", MARIA_SLAVE_CAPABILITY_MINE).as_str());
+        self.update(format!("SET @master_heartbeat_period=  '{}'", DirectLogFetcher::MASTER_HEARTBEAT_PERIOD_NANOSECOND).as_str());
     }
 
 
@@ -499,6 +500,7 @@ impl MysqlConnection {
 
         let header = read_header(self.connector.channel.as_mut().unwrap()).unwrap();
         let bytes = read_bytes(self.connector.channel.as_mut().unwrap(), header.packet_body_length());
+
         if bytes[0] > 127 {
             if bytes[0] == 255 {
                 let mut error = ErrorPacket::new();
@@ -509,6 +511,8 @@ impl MysqlConnection {
             }
         }
     }
+
+
     fn send_binlog_dump(&mut self, binlog_filename: &str, binlog_position: u32) {
         let mut packet = BinlogDumpCommandPacket::from(binlog_filename, binlog_position, self.slave_id);
         let body = packet.to_bytes();

@@ -28,7 +28,7 @@ pub fn write_pkg(ch: &mut Box<dyn TcpSocketChannel>, srcs: &[u8]) {
 }
 
 pub fn write_body(ch: &mut Box<dyn TcpSocketChannel>, body: &[u8]) {
-    write_body0(ch, body, 0)
+    write_body0(ch, body, 0x00)
 }
 
 pub fn write_body0(ch: &mut Box<dyn TcpSocketChannel>, srcs: &[u8], packet_seq_number: u8) {

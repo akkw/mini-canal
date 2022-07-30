@@ -1189,12 +1189,13 @@ impl LogBuffer {
 
     pub fn get_full_string_pos_len(&self, pos: usize, len: usize) -> Option<String> {
         if self.check_pos_gre(pos, len) {
-            let body = &self.buffer[self.origin + pos..len];
+            let body = &self.buffer[self.origin + pos..self.origin + pos + len];
             Option::Some(ISO_8859_1.decode(body, DecoderTrap::Strict).unwrap())
         } else {
             Option::None
         }
     }
+
     pub fn get_full_string_len(&mut self, len: usize) -> Option<String> {
         if self.check_gre(len) {
             let body = &self.buffer[self.position..len];
@@ -1620,7 +1621,8 @@ impl<'a> DirectLogFetcher<'a> {
     const DEFAULT_INITIAL_CAPACITY: usize = 8192;
     const DEFAULT_GROWTH_FACTOR: f32 = 2.0;
     const BIN_LOG_HEADER_SIZE: u32 = 4;
-    const MASTER_HEARTBEAT_PERIOD_SECONDS: u32 = 15;
+    pub const MASTER_HEARTBEAT_PERIOD_NANOSECOND: u64 = 15000000000;
+    pub const MASTER_HEARTBEAT_PERIOD_SECONDS: u32 = 15;
     const READ_TIMEOUT_MILLISECONDS: u32 = (Self::MASTER_HEARTBEAT_PERIOD_SECONDS + 10) * 1000;
     const COM_BINLOG_DUMP: u32 = 18;
     const NET_HEADER_SIZE: usize = 4;
