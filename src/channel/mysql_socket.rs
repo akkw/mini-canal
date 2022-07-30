@@ -7,7 +7,8 @@ use crate::command::{event, msc, Packet, write_header_and_body};
 use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
-use crate::command::event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, MARIA_SLAVE_CAPABILITY_MINE};
+use crate::command::decoder::LogDecoder;
+use crate::command::event::{BINLOG_CHECKSUM_ALG_CRC32, BINLOG_CHECKSUM_ALG_OFF, ENUM_END_EVENT, FormatDescriptionLogEvent, LogContext, MARIA_SLAVE_CAPABILITY_MINE, UNKNOWN_EVENT};
 use crate::instance::log_buffer::DirectLogFetcher;
 use crate::parse::support::AuthenticationInfo;
 
@@ -447,11 +448,22 @@ impl MysqlConnection {
         self.send_register_slave();
         self.send_binlog_dump(binlog_filename, binlog_position);
         let mut fetcher = DirectLogFetcher::new();
-        fetcher.start(Option::Some(&mut self.connector.channel.as_mut().unwrap()))
+        let channel = &mut self.connector.channel.as_mut().unwrap();
+        fetcher.start(Option::Some(channel));
+
+        let decoder = LogDecoder::from(UNKNOWN_EVENT as usize, ENUM_END_EVENT);
+        let mut context = LogContext::new();
+        context.set_description_event(FormatDescriptionLogEvent::from_binlog_version_binlog_check_sum(4, self.binlog_checksum));
+        while fetcher.fetch().unwrap() {
+            let mut event = decoder.decode(fetcher.log_buffer(), &mut context);
+            println!("event: {:?}", event);
 
 
-
-
+            let semival = event.event_mut().unwrap();
+            if semival.semival() == 1 {
+                println!("send semival!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            }
+        }
     }
 
     fn update_settings(&mut self) {

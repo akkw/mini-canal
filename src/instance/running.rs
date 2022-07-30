@@ -10,17 +10,19 @@ pub struct MysqlEventParser {
     binlog_parser: Option<LogEventConvert>,
     running: bool,
     server_id: i64,
+    position: Option<EntryPosition>
 }
 
 impl MysqlEventParser {
     pub fn from(authentication_info: AuthenticationInfo) -> MysqlEventParser {
         MysqlEventParser {
             database_info: Option::Some(authentication_info),
-            master_position: Option::None,
-            meta_connection: Option::None,
-            binlog_parser: Option::None,
+            master_position: None,
+            meta_connection: None,
+            binlog_parser: None,
             running: false,
             server_id: 0,
+            position: None
         }
     }
 
@@ -41,8 +43,13 @@ impl MysqlEventParser {
         if server_id > 0 {
             self.server_id = server_id;
         }
+        let position;
+        if let Some(pos) =  &self.position {
+            position = pos.clone();
+        } else {
+            position = self.find_start_position().unwrap();
+        }
 
-        let position = self.find_start_position().unwrap();
 
 
         connection.reconnect();
@@ -69,6 +76,9 @@ impl MysqlEventParser {
         let position = fields.get(1).unwrap().parse::<u32>().unwrap();
         let entry = EntryPosition::from_position(String::from(journal_name), position);
         Result::Ok(entry)
+    }
+    pub fn set_position(&mut self, position: Option<EntryPosition>) {
+        self.position = position;
     }
 }
 

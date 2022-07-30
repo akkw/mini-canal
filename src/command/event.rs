@@ -262,7 +262,7 @@ pub const MYSQL_TYPE_VAR_STRING: u8 = 253;
 pub const MYSQL_TYPE_STRING: u8 = 254;
 pub const MYSQL_TYPE_GEOMETRY: u8 = 255;
 
-
+#[derive(Debug)]
 pub struct LogHeader {
     kind: usize,
     log_pos: u32,
@@ -317,7 +317,7 @@ impl LogHeader {
         header.server_id = buffer.get_uint32().ok()?;
         header.event_len = buffer.get_uint32().ok()? as usize;
 
-        if description_event.binlog_version == 1 {
+        if description_event.start_log_event_v3.binlog_version == 1 {
             header.log_pos = 0;
             header.flags = 0;
             return Option::Some(header);
@@ -333,7 +333,7 @@ impl LogHeader {
          * reading a Format_desc (remember that mysqlbinlog starts by assuming
          * that 5.0 logs are in 4.0 format, until it finds a Format_desc).
          */
-        if description_event.binlog_version == 3 && header.kind < FORMAT_DESCRIPTION_EVENT && header.log_pos != 0 {
+        if description_event.start_log_event_v3.binlog_version == 3 && header.kind < FORMAT_DESCRIPTION_EVENT && header.log_pos != 0 {
             /*
              * If log_pos=0, don't change it. log_pos==0 is a marker to mean
              * "don't change rli->group_master_log_pos" (see
@@ -375,7 +375,7 @@ impl LogHeader {
                 header.checksum_alg = BINLOG_CHECKSUM_ALG_UNDEF;
 
                 if FormatDescriptionLogEvent::version_product(&mut version_split) >= FormatDescriptionLogEvent::CHECKSUM_VERSION_PRODUCT {
-                    buffer.up_position(header.event_len - (BINLOG_CHECKSUM_LEN - BINLOG_CHECKSUM_ALG_DESC_LEN) as usize).unwrap();
+                    buffer.up_position(header.event_len - BINLOG_CHECKSUM_LEN as usize - BINLOG_CHECKSUM_ALG_DESC_LEN as usize).unwrap();
                     header.checksum_alg = buffer.get_uint8().ok()?
                 }
 
@@ -391,7 +391,7 @@ impl LogHeader {
 
     fn process_check_sum(&mut self, buffer: &mut LogBuffer) {
         if self.checksum_alg != BINLOG_CHECKSUM_ALG_OFF && self.checksum_alg != BINLOG_CHECKSUM_ALG_UNDEF {
-            self.crc = buffer.get_uint32_pos(self.event_len - BINLOG_CHECKSUM_ALG_DESC_LEN as usize).unwrap();
+            self.crc = buffer.get_uint32_pos(self.event_len - BINLOG_CHECKSUM_LEN as usize).unwrap();
         }
     }
     pub fn from_kind(kind: usize) -> LogHeader {
@@ -475,7 +475,7 @@ impl LogHeader {
 
 }
 
-
+#[derive(Debug)]
 pub struct Event {
     header: LogHeader,
     semival: u8,
@@ -574,6 +574,7 @@ impl Event {
 }
 
 
+#[derive(Debug)]
 pub struct AppendBlockLogEvent {
     event: Event,
     block_buf: LogBuffer,
@@ -619,7 +620,7 @@ impl AppendBlockLogEvent {
         Self { event: Event::new(), block_buf: LogBuffer::new(), block_len: 0, filed_id: 0 }
     }
 }
-
+#[derive(Debug)]
 pub struct BeginLoadQueryLogEvent {
     append_block_log_event: AppendBlockLogEvent,
 }
@@ -631,7 +632,7 @@ impl BeginLoadQueryLogEvent {
         }
     }
 }
-
+#[derive(Debug)]
 pub struct CreateFileLogEvent {
     event: Event,
     load_log_event: LoadLogEvent,
@@ -648,7 +649,7 @@ impl CreateFileLogEvent {
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Self {
         let mut event = CreateFileLogEvent {
             event: Event::new(),
-            load_log_event: LoadLogEvent::from(header, buffer, description_event),
+            load_log_event: LoadLogEvent::from(header, buffer, description_event).unwrap(),
             block_buf: LogBuffer::new(),
             block_len: 0,
             filed_id: 0,
@@ -660,7 +661,7 @@ impl CreateFileLogEvent {
         let create_file_header_len = description_event.post_header_len[CREATE_FILE_EVENT - 1] as usize;
         let offset = if header.kind == LOAD_EVENT { load_header_len + header_len } else { header_len + load_header_len + create_file_header_len };
         event.load_log_event.copy_log_event(buffer, offset, description_event);
-        if description_event.binlog_version != 1 {
+        if description_event.start_log_event_v3.binlog_version != 1 {
             event.filed_id = buffer.get_uint32_pos(header_len + load_header_len + Self::CF_FILE_ID_OFFSET).unwrap();
             event.block_len = buffer.limit() - buffer.position();
             event.block_buf = buffer.duplicate_len(event.block_len).unwrap();
@@ -682,7 +683,7 @@ impl CreateFileLogEvent {
         self.block_buf.get_data()
     }
 }
-
+#[derive(Debug)]
 pub struct DeleteFileLogEvent {
     event: Event,
     filed_id: u32,
@@ -707,7 +708,7 @@ impl DeleteFileLogEvent {
         self.filed_id
     }
 }
-
+#[derive(Debug)]
 pub struct DeleteRowsLogEvent {
     rows_log_event: RowsLogEvent,
 }
@@ -723,7 +724,7 @@ impl DeleteRowsLogEvent {
         &mut self.rows_log_event
     }
 }
-
+#[derive(Debug)]
 pub struct ExecuteLoadLogEvent {
     event: Event,
     file_id: u32,
@@ -748,7 +749,7 @@ impl ExecuteLoadLogEvent {
         self.file_id
     }
 }
-
+#[derive(Debug)]
 pub struct ExecuteLoadQueryLogEvent {
     query_log_event: QueryLogEvent,
     file_id: u32,
@@ -802,11 +803,9 @@ impl ExecuteLoadQueryLogEvent {
     }
 }
 
-
+#[derive(Debug)]
 pub struct FormatDescriptionLogEvent {
     start_log_event_v3: StartLogEventV3,
-    binlog_version: u16,
-    server_version: Option<String>,
     common_header_len: usize,
     number_of_event_types: usize,
     post_header_len: Box<[u8]>,
@@ -817,8 +816,6 @@ impl Clone for FormatDescriptionLogEvent {
     fn clone(&self) -> Self {
         FormatDescriptionLogEvent {
             start_log_event_v3: StartLogEventV3::new(),
-            binlog_version: self.binlog_version,
-            server_version: Option::None,
             common_header_len: self.common_header_len,
             number_of_event_types: self.number_of_event_types,
             post_header_len: self.post_header_len.clone(),
@@ -826,7 +823,6 @@ impl Clone for FormatDescriptionLogEvent {
         }
     }
 }
-
 
 impl FormatDescriptionLogEvent {
 
@@ -877,38 +873,34 @@ impl FormatDescriptionLogEvent {
     pub const CHECKSUM_VERSION_PRODUCT: u32 = ((FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[0] as u32 * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[1] as u32) * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[2] as u32) as u32;
     #[allow(arithmetic_overflow)]
 
-    pub fn from(&mut self, header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
-        buffer.up_position(description_event.common_header_len).unwrap();
+    pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
         let mut event = FormatDescriptionLogEvent {
-            start_log_event_v3: StartLogEventV3::new(),
-            binlog_version: buffer.get_uint16()?,
-            server_version: buffer.get_fix_string_len(FormatDescriptionLogEvent::ST_SERVER_VER_LEN),
+            start_log_event_v3: StartLogEventV3::from(header, buffer, description_event).unwrap(),
             common_header_len: 0,
             number_of_event_types: 0,
             post_header_len: Box::from([]),
             server_version_split: [0, 0, 0],
         };
-        event.start_log_event_v3 = StartLogEventV3::from(header, buffer, description_event).unwrap();
         buffer.up_position((FormatDescriptionLogEvent::LOG_EVENT_MINIMAL_HEADER_LEN + FormatDescriptionLogEvent::ST_COMMON_HEADER_LEN_OFFSET) as usize)?;
-        self.common_header_len = buffer.get_uint8()? as usize;
-        if self.common_header_len < FormatDescriptionLogEvent::OLD_HEADER_LEN as usize {
+        event.common_header_len = buffer.get_uint8()? as usize;
+        if event.common_header_len < FormatDescriptionLogEvent::OLD_HEADER_LEN as usize {
             return Result::Err(String::from("Format Description event header length is too short"));
         }
 
-        self.number_of_event_types = buffer.limit() - (FormatDescriptionLogEvent::LOG_EVENT_MINIMAL_HEADER_LEN as usize - FormatDescriptionLogEvent::ST_COMMON_HEADER_LEN_OFFSET as usize + 1);
+        event.number_of_event_types = buffer.limit() - (FormatDescriptionLogEvent::LOG_EVENT_MINIMAL_HEADER_LEN as usize + FormatDescriptionLogEvent::ST_COMMON_HEADER_LEN_OFFSET as usize + 1);
 
         let mut post_header = vec![];
-        for _i in 0..self.number_of_event_types {
+        for _i in 0..event.number_of_event_types {
             post_header.push(buffer.get_uint8()?);
         }
-        self.post_header_len = Box::from(post_header);
-        self.calc_server_version_split();
-        let calc = self.get_version_product();
+        event.post_header_len = Box::from(post_header);
+        event.calc_server_version_split();
+        let calc = event.get_version_product();
         if calc >= FormatDescriptionLogEvent::CHECKSUM_VERSION_PRODUCT {
-            self.number_of_event_types -= FormatDescriptionLogEvent::BINLOG_CHECKSUM_ALG_DESC_LEN as usize;
+            event.number_of_event_types -= FormatDescriptionLogEvent::BINLOG_CHECKSUM_ALG_DESC_LEN as usize;
         }
 
-        println!("common_header_len: {} , number_of_event_types:{} ", self.common_header_len, self.number_of_event_types);
+        println!("common_header_len: {} , number_of_event_types:{} ", event.common_header_len, event.number_of_event_types);
         Result::Ok(event)
     }
 
@@ -920,26 +912,24 @@ impl FormatDescriptionLogEvent {
     pub fn from_binlog_version(binlog_version: u16) -> FormatDescriptionLogEvent {
         let mut event = FormatDescriptionLogEvent {
             start_log_event_v3: StartLogEventV3::from_none(),
-            binlog_version,
-            server_version: Option::None,
             common_header_len: 0,
             number_of_event_types: 0,
-            post_header_len: Box::from([0 as u8, 165]),
+            post_header_len: Box::from([0 as u8; ENUM_END_EVENT]),
             server_version_split: [0, 0, 0],
         };
 
         match binlog_version {
             4 => {
-                event.server_version = Option::Some(SERVER_VERSION.to_string());
-                event.common_header_len = Self::LOAD_HEADER_LEN;
+                event.start_log_event_v3.server_version = Option::Some(SERVER_VERSION.to_string());
+                event.common_header_len = Self::LOG_EVENT_HEADER_LEN;
                 event.number_of_event_types = Self::LOG_EVENT_TYPES;
                 event.post_header_len[START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
                 event.post_header_len[QUERY_EVENT - 1] = QUERY_HEADER_LEN;
                 event.post_header_len[STOP_EVENT - 1] = Self::STOP_HEADER_LEN;
                 event.post_header_len[ROTATE_EVENT - 1] = Self::ROTATE_HEADER_LEN;
                 event.post_header_len[INTVAR_EVENT - 1] = Self::INTVAR_HEADER_LEN;
-                event.post_header_len[LOAD_EVENT - 1] = Self::LOG_EVENT_HEADER_LEN as u8;
-                event.post_header_len[SLAVE_EVENT - 1] = Self::STOP_HEADER_LEN;
+                event.post_header_len[LOAD_EVENT - 1] = Self::LOAD_HEADER_LEN as u8;
+                event.post_header_len[SLAVE_EVENT - 1] = Self::SLAVE_HEADER_LEN;
                 event.post_header_len[CREATE_FILE_EVENT - 1] = Self::CREATE_FILE_HEADER_LEN;
                 event.post_header_len[APPEND_BLOCK_EVENT - 1] = Self::APPEND_BLOCK_HEADER_LEN;
                 event.post_header_len[EXEC_LOAD_EVENT - 1] = Self::EXEC_LOAD_HEADER_LEN;
@@ -950,11 +940,11 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[FORMAT_DESCRIPTION_EVENT] = Self::FORMAT_DESCRIPTION_HEADER_LEN as u8;
                 event.post_header_len[XID_EVENT - 1] = Self::XID_HEADER_LEN;
                 event.post_header_len[BEGIN_LOAD_QUERY_EVENT - 1] = Self::BINLOG_CHECKPOINT_HEADER_LEN;
-                event.post_header_len[EXEC_LOAD_EVENT - 1] = Self::EXECUTE_LOAD_QUERY_HEADER_LEN;
+                event.post_header_len[EXECUTE_LOAD_QUERY_EVENT - 1] = Self::EXECUTE_LOAD_QUERY_HEADER_LEN;
                 event.post_header_len[TABLE_MAP_EVENT - 1] = Self::TABLE_MAP_HEADER_LEN;
                 event.post_header_len[WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V1;
                 event.post_header_len[UPDATE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
-                let _ = event.post_header_len[Self::DELETE_FILE_HEADER_LEN - 1] - Self::ROWS_HEADER_LEN_V1;
+                event.post_header_len[DELETE_ROWS_EVENT_V1 - 1] = Self::ROWS_HEADER_LEN_V1;
                 /*
                  * We here have the possibility to simulate a master of before
                  * we changed the table map id to be stored in 6 bytes: when it
@@ -970,7 +960,7 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[ROWS_QUERY_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
                 event.post_header_len[WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
                 event.post_header_len[UPDATE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
-                event.post_header_len[Self::DELETE_FILE_HEADER_LEN - 1] = Self::ROWS_HEADER_LEN_V2;
+                event.post_header_len[DELETE_ROWS_EVENT- 1] = Self::ROWS_HEADER_LEN_V2;
                 event.post_header_len[GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
                 event.post_header_len[ANONYMOUS_GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
                 event.post_header_len[PREVIOUS_GTIDS_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
@@ -983,9 +973,12 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[GTID_EVENT - 1] = Self::GTID_HEADER_LEN;
                 event.post_header_len[GTID_LIST_EVENT - 1] = Self::GTID_LIST_HEADER_LEN;
                 event.post_header_len[START_ENCRYPTION_EVENT - 1] = Self::START_ENCRYPTION_HEADER_LEN;
+                for i in 0..event.post_header_len.len() {
+                    println!("{}", event.post_header_len[i] )
+                }
             }
             3 => {
-                event.server_version = Option::Some(String::from("4.0"));
+                event.start_log_event_v3.server_version = Option::Some(String::from("4.0"));
                 event.common_header_len = Self::LOG_EVENT_MINIMAL_HEADER_LEN as usize;
                 event.number_of_event_types = FORMAT_DESCRIPTION_EVENT - 1;
                 event.post_header_len[START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
@@ -999,7 +992,7 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[NEW_LOAD_EVENT - 1] = event.post_header_len[LOAD_EVENT - 1];
             }
             1 => {
-                event.server_version = Option::Some(String::from("3.23"));
+                event.start_log_event_v3.server_version = Option::Some(String::from("3.23"));
                 event.common_header_len = Self::OLD_HEADER_LEN as usize;
                 event.number_of_event_types = FORMAT_DESCRIPTION_EVENT - 1;
                 event.post_header_len[START_EVENT_V3 - 1] = Self::START_V3_HEADER_LEN as u8;
@@ -1021,14 +1014,14 @@ impl FormatDescriptionLogEvent {
 
 
     pub fn binlog_version(&self) -> u16 {
-        self.binlog_version
+        self.start_log_event_v3.binlog_version
     }
     pub fn server_version(&self) -> &str {
-        self.server_version.as_ref().unwrap()
+        self.start_log_event_v3.server_version.as_ref().unwrap()
     }
 
     pub fn calc_server_version_split(&mut self) {
-        Self::do_server_version_split(&self.server_version.as_ref().unwrap(), &mut self.server_version_split);
+        Self::do_server_version_split(&self.start_log_event_v3.server_version.as_ref().unwrap(), &mut self.server_version_split);
     }
 
     pub fn do_server_version_split(server_version: &str, server_version_split: &mut [u8; 3]) {
@@ -1042,10 +1035,12 @@ impl FormatDescriptionLogEvent {
             let mut i = 0;
             while i < 3 {
                 let str = split[i];
+                j = 0;
                 for char in str.chars() {
-                    if char.is_ascii_digit() {
+                    if !char.is_ascii_digit() {
                         break;
                     }
+                    j+=1;
                 }
                 if j > 0 {
                     server_version_split[i] = str[0..j].parse::<u8>().unwrap();
@@ -1068,11 +1063,9 @@ impl FormatDescriptionLogEvent {
     pub fn new() -> Self {
         Self {
             start_log_event_v3: StartLogEventV3::new(),
-            binlog_version: 0,
-            server_version: Option::None,
             common_header_len: 0,
             number_of_event_types: 0,
-            post_header_len: Box::from(vec![]),
+            post_header_len: Box::from([]),
             server_version_split: [0, 0, 0],
         }
     }
@@ -1080,7 +1073,7 @@ impl FormatDescriptionLogEvent {
         &mut self.start_log_event_v3
     }
 }
-
+#[derive(Debug)]
 pub struct GtidLogEvent {
     event: Event,
     commit_flag: bool,
@@ -1148,7 +1141,7 @@ impl GtidLogEvent {
         gtid
     }
 }
-
+#[derive(Debug)]
 pub struct HeartbeatLogEvent {
     event: Event,
     ident_len: usize,
@@ -1177,7 +1170,7 @@ impl HeartbeatLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct IgnorableLogEvent {
     event: Event,
 }
@@ -1191,7 +1184,7 @@ impl IgnorableLogEvent {
         event
     }
 }
-
+#[derive(Debug)]
 pub struct IncidentLogEvent {
     event: Event,
     incident: usize,
@@ -1233,7 +1226,7 @@ impl IncidentLogEvent {
         &self.message
     }
 }
-
+#[derive(Debug)]
 pub struct InvarianceLogEvent {
     event: Event,
     value: i64,
@@ -1263,7 +1256,7 @@ impl InvarianceLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct LoadLogEvent {
     event: Event,
     table: Option<String>,
@@ -1413,7 +1406,7 @@ impl LoadLogEvent {
 //
 //
 // }
-
+#[derive(Debug)]
 pub struct PreviousGtidsLogEvent {
     event: Event,
 }
@@ -1428,7 +1421,7 @@ impl PreviousGtidsLogEvent {
     }
 }
 
-
+#[derive(Debug)]
 pub struct QueryLogEvent {
     event: Event,
     user: Option<String>,
@@ -1845,7 +1838,7 @@ impl QueryLogEvent {
         }
     }
 }
-
+#[derive(Debug)]
 pub struct RandLogEvent {
     event: Event,
     seed1: i64,
@@ -1872,7 +1865,7 @@ impl RandLogEvent {
         String::from(format!("SET SESSION rand_seed1 = {} , rand_seed2 = {}", self.seed1, self.seed2))
     }
 }
-
+#[derive(Debug)]
 pub struct RotateLogEvent {
     event: Event,
     file_name: Option<String>,
@@ -1889,6 +1882,7 @@ impl RotateLogEvent {
             file_name: None,
             position: 0,
         };
+        event.event.header = header.clone();
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[ROTATE_EVENT - 1] as usize;
 
@@ -1916,11 +1910,11 @@ impl RotateLogEvent {
         self.position
     }
 }
-
+#[derive(Debug)]
 pub struct RowsLogBuffer {
     event: Event
 }
-
+#[derive(Debug)]
 pub struct RowsLogEvent {
     event: Event,
     table_id: u64,
@@ -2055,7 +2049,7 @@ impl RowsLogEvent {
         }
     }
 }
-
+#[derive(Debug)]
 pub struct RowsQueryLogEvent {
     ignorable_log_event: IgnorableLogEvent,
     rows_query: Option<String>,
@@ -2080,7 +2074,7 @@ impl RowsQueryLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct StartLogEventV3 {
     event: Event,
     binlog_version: u16,
@@ -2131,7 +2125,7 @@ impl StartLogEventV3 {
         &mut self.event
     }
 }
-
+#[derive(Debug)]
 pub struct StopLogEvent {
     event: Event,
 }
@@ -2145,7 +2139,7 @@ impl StopLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct TableMapLogEvent {
     event: Event,
     dbname: Option<String>,
@@ -2610,7 +2604,7 @@ impl TableMapLogEvent {
         }
     }
 }
-
+#[derive(Debug)]
 pub struct ColumnInfo {
     kind: u8,
     meta: u16,
@@ -2660,7 +2654,7 @@ impl Clone for ColumnInfo {
         }
     }
 }
-
+#[derive(Debug)]
 struct Pair {
     col_index: i32,
     col_charset: i32,
@@ -2679,7 +2673,7 @@ impl Display for ColumnInfo {
                , self.kind, self.meta, self.name, self.unsigned, self.pk, self.set_enum_values, self.charset, self.geo_type, self.nullable, self.visibility, self.array)
     }
 }
-
+#[derive(Debug)]
 pub struct TransactionContextLogEvent {
     event: Event,
 }
@@ -2693,7 +2687,7 @@ impl TransactionContextLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct TransactionPayloadLogEvent {
     event: Event,
 }
@@ -2707,7 +2701,7 @@ impl TransactionPayloadLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct UnknownLogEvent {
     event: Event,
 }
@@ -2721,7 +2715,7 @@ impl UnknownLogEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct UpdateRowsLogEvent {
     rows_log_event: RowsLogEvent,
 }
@@ -2748,7 +2742,7 @@ impl UpdateRowsLogEvent {
         &mut self.rows_log_event
     }
 }
-
+#[derive(Debug)]
 pub struct UserVarLogEvent {
     event: Event,
     name: Option<String>,
@@ -2856,7 +2850,7 @@ impl UserVarLogEvent {
         }
     }
 }
-
+#[derive(Debug)]
 pub struct ViewChangeEvent {
     event: Event,
 }
@@ -2870,7 +2864,7 @@ impl ViewChangeEvent {
         Option::Some(event)
     }
 }
-
+#[derive(Debug)]
 pub struct WriteRowsLogEvent {
     event: RowsLogEvent,
 }
@@ -2889,7 +2883,7 @@ impl WriteRowsLogEvent {
         &mut self.event
     }
 }
-
+#[derive(Debug)]
 pub struct XaPrepareLogEvent {
     event: Event,
     one_phase: bool,
@@ -2953,7 +2947,7 @@ impl XaPrepareLogEvent {
         &self.data
     }
 }
-
+#[derive(Debug)]
 pub struct XidLogEvent {
     event: Event,
     xid: i64
@@ -2976,6 +2970,7 @@ impl XidLogEvent {
         self.xid
     }
 }
+#[derive(Debug)]
 pub enum LogEvent {
     Null(Option<()>),
     AppendBlockLog(AppendBlockLogEvent),
@@ -3237,7 +3232,7 @@ impl LogEvent {
         }
     }
 }
-
+#[derive(Debug)]
 pub struct LogContext {
     map_table: HashMap<u64, TableMapLogEvent>,
     description_event: FormatDescriptionLogEvent,
@@ -3304,7 +3299,7 @@ impl Clone for TableMapLogEvent {
     }
 }
 
-
+#[derive(Debug)]
 pub struct LogPosition {
     file_name: Option<String>,
     position: usize,
@@ -3363,6 +3358,7 @@ impl Display for LogPosition {
 
 type StringResult<T> = Result<T, String>;
 
+#[derive(Debug)]
 enum Serializable {
     String(String),
     Double(f64),

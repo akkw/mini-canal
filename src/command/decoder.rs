@@ -4,7 +4,7 @@ use crate::command::event::{*};
 use crate::command::event::LogEvent::UnknownLog;
 use crate::instance::log_buffer::LogBuffer;
 
-struct LogDecoder {
+pub struct LogDecoder {
     handle_set: BitSet,
 }
 
@@ -52,7 +52,8 @@ impl LogDecoder {
                 if self.handle_set.contains(header.kind()) {
                     buffer.new_limit(len);
 
-                    event = Self::decode_event(buffer, &header, context)
+                    event = Self::decode_event(buffer, &header, context);
+                    buffer.new_limit(limit);
                 } else {
                     event = UnknownLog(UnknownLogEvent::from(&header).unwrap());
                 }
@@ -130,18 +131,158 @@ impl LogDecoder {
                 return LogEvent::LoadLog(event);
             }
             SLAVE_EVENT => {
-                println!("Skipping unsupported SLAVE_EVENT from: {}", context.getLogPosition())
+                println!("Skipping unsupported SLAVE_EVENT from: {}", context.position().position())
             }
             CREATE_FILE_EVENT => {
                 let event = CreateFileLogEvent::from(header, buffer, context.description_event());
                 context.position().set_position(header.log_pos() as usize);
                 return LogEvent::CreateFileLog(event);
             }
-
-
-            _ => todo!()
+            APPEND_BLOCK_EVENT => {
+                let event = AppendBlockLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::AppendBlockLog(event);
+            }
+            DELETE_FILE_EVENT => {
+                let event = DeleteFileLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::DeleteFileLog(event);
+            }
+            EXEC_LOAD_EVENT => {
+                let event = ExecuteLoadLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::ExecuteLoadLog(event);
+            }
+            START_EVENT_V3 => {
+                let event = StartLogEventV3::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::StartLogV3(event);
+            }
+            STOP_EVENT => {
+                let event = StopLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::StopLog(event);
+            }
+            INTVAR_EVENT => {
+                let event = InvarianceLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::InvarianceLog(event);
+            }
+            RAND_EVENT => {
+                let event = RandLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::RandLog(event);
+            }
+            USER_VAR_EVENT => {
+                let event = UserVarLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::UserVarLog(event);
+            }
+            FORMAT_DESCRIPTION_EVENT => {
+                let description_event = FormatDescriptionLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.set_description_event(description_event);
+            }
+            PRE_GA_WRITE_ROWS_EVENT |
+            PRE_GA_UPDATE_ROWS_EVENT |
+            PRE_GA_DELETE_ROWS_EVENT => {
+                println!("Skipping unsupported SLAVE_EVENT from: {}", context.position().position())
+            }
+            BEGIN_LOAD_QUERY_EVENT => {
+                let event = BeginLoadQueryLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::BeginLoadQueryLog(event);
+            }
+            EXECUTE_LOAD_QUERY_EVENT => {
+                let event = ExecuteLoadQueryLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::ExecuteLoadQueryLog(event);
+            }
+            INCIDENT_EVENT => {
+                let event = IncidentLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::IncidentLog(event);
+            }
+            HEARTBEAT_LOG_EVENT => {
+                let event = HeartbeatLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::HeartbeatLog(event);
+            }
+            IGNORABLE_LOG_EVENT => {
+                let event = IgnorableLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::IgnorableLog(event);
+            }
+            ROWS_QUERY_LOG_EVENT => {
+                let event = RowsQueryLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::RowsQueryLog(event);
+            }
+            PARTIAL_UPDATE_ROWS_EVENT => {
+                let event = UpdateRowsLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::UpdateRowsLog(event);
+            }
+            GTID_LOG_EVENT |
+            ANONYMOUS_GTID_LOG_EVENT => {
+                todo!()
+            }
+            PREVIOUS_GTIDS_LOG_EVENT => {
+                let event = PreviousGtidsLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::PreviousGtidsLog(event);
+            }
+            TRANSACTION_CONTEXT_EVENT => {
+                let event = TransactionContextLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::TransactionContextLog(event);
+            }
+            TRANSACTION_PAYLOAD_EVENT=> {
+                let event = TransactionPayloadLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::TransactionPayloadLog(event);
+            }
+            VIEW_CHANGE_EVENT => {
+                let event = ViewChangeEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::ViewChange(event);
+            }
+            XA_PREPARE_LOG_EVENT => {
+                let event = XaPrepareLogEvent::from(header, buffer, context.description_event()).unwrap();
+                context.position().set_position(header.log_pos() as usize);
+                return LogEvent::XaPrepareLog(event);
+            }
+            ANNOTATE_ROWS_EVENT => {
+                todo!()
+            }
+            BINLOG_CHECKPOINT_EVENT => {
+                todo!()
+            }
+            GTID_EVENT => {
+                todo!()
+            }
+            GTID_LIST_EVENT => {
+                todo!()
+            }
+            START_ENCRYPTION_EVENT => {
+                todo!()
+            }
+            _ =>  {
+                /*
+                 * Create an object of Ignorable_log_event for unrecognized
+                 * sub-class. So that SLAVE SQL THREAD will only update the
+                 * position and continue.
+                 */
+                if buffer.get_uint16().unwrap() & LOG_EVENT_IGNORABLE_F as u16 > 0 {
+                    let event = IgnorableLogEvent::from(header, buffer, context.description_event());
+                    context.position().set_position(header.log_pos() as usize);
+                    return LogEvent::IgnorableLog(event);
+                } else {
+                    println!("Skipping unsupported SLAVE_EVENT from: {}", context.position().position())
+                }
+            }
         }
+        context.position().set_position(header.log_pos() as usize);
 
-        LogEvent::Null(Option::None)
+        LogEvent::UnknownLog(UnknownLogEvent::from(header).unwrap())
     }
 }

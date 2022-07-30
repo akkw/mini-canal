@@ -87,7 +87,7 @@ impl TcpSocketChannel for TcpChannel {
     }
 
     fn read_offset_len(&mut self, buf: &mut [u8], off: usize, len: usize) -> Result<usize> {
-        self.channel.read(&mut buf[off..len])
+        self.channel.read(&mut buf[off..off + len])
     }
 
     fn is_connected(&self) -> bool {

@@ -9,6 +9,21 @@ pub struct EntryPosition {
     gtid: Option<String>,
 }
 
+
+impl Clone for EntryPosition {
+    fn clone(&self) -> Self {
+        Self {
+            timestamp: self.timestamp,
+            eventidentity_segment: self.eventidentity_segment,
+            eventidentity_split: self.eventidentity_split,
+            included: self.included,
+            journal_name: self.journal_name.clone(),
+            position: self.position,
+            server_id: self.server_id,
+            gtid: self.gtid.clone()
+        }
+    }
+}
 impl EntryPosition {
     pub fn new() -> Self {
         Self {
@@ -36,7 +51,7 @@ impl EntryPosition {
         }
     }
 
-    pub(crate) fn from_position(journal_name: String, position: u32) -> EntryPosition {
+    pub fn from_position(journal_name: String, position: u32) -> EntryPosition {
         EntryPosition {
             timestamp: Option::None,
             eventidentity_segment: Option::None,

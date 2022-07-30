@@ -16,6 +16,7 @@ const POWERS10: [usize; 10] = [1, 10, 100, 1000, 10000, 100000, 1000000, 1000000
 const DIG_PER_INT32: usize = 9;
 const SIZE_OF_INT32: usize = 4;
 
+#[derive(Debug)]
 pub struct LogBuffer {
     buffer: Vec<u8>,
     origin: usize,
@@ -25,8 +26,6 @@ pub struct LogBuffer {
 }
 
 impl LogBuffer {
-
-
     pub fn from(buffer: Vec<u8>, origin: usize, limit: usize) -> Result<LogBuffer, String> {
         if origin + limit > buffer.len().try_into().unwrap() {
             return Result::Err(String::from(format!("capacity excceed: {}", origin + limit)));
@@ -840,7 +839,7 @@ impl LogBuffer {
             let i4 = self.buffer[position + 4];
             let i5 = self.buffer[position + 5];
             let i6 = self.buffer[position + 6];
-            return  Result::Ok((i6 as i64 | (i5 as i64) << 8 | (i4 as i64) << 16
+            return Result::Ok((i6 as i64 | (i5 as i64) << 8 | (i4 as i64) << 16
                 | (i3 as i64) << 24 | (i2 as i64) < 32 | (i1 as i64) << 40 | (i as i64) << 48)
                 as i64);
         }
@@ -1180,7 +1179,8 @@ impl LogBuffer {
             while (found < end) && self.buffer[found] as char != '\0' {
                 found += 1;
             }
-            let body = &self.buffer[from..found - from];
+            let body = &self.buffer[from..found];
+            self.position += len;
             Option::Some(ISO_8859_1.decode(body, DecoderTrap::Strict).unwrap())
         } else {
             Option::None
@@ -1609,7 +1609,6 @@ impl LogBuffer {
 }
 
 
-
 pub struct DirectLogFetcher<'a> {
     log_buffer: LogBuffer,
     factor: f32,
@@ -1617,7 +1616,7 @@ pub struct DirectLogFetcher<'a> {
     isem: bool,
 }
 
-impl <'a>DirectLogFetcher<'a> {
+impl<'a> DirectLogFetcher<'a> {
     const DEFAULT_INITIAL_CAPACITY: usize = 8192;
     const DEFAULT_GROWTH_FACTOR: f32 = 2.0;
     const BIN_LOG_HEADER_SIZE: u32 = 4;
@@ -1629,6 +1628,7 @@ impl <'a>DirectLogFetcher<'a> {
     const PACKET_LEN_OFFSET: usize = 0;
     const PACKET_SEQ_OFFSET: usize = 3;
     const MAX_PACKET_LENGTH: usize = 256 * 256 * 256 - 1;
+
     pub fn new() -> Self {
         Self {
             log_buffer: LogBuffer {
@@ -1639,7 +1639,7 @@ impl <'a>DirectLogFetcher<'a> {
                 seminal: 0,
             },
             factor: Self::DEFAULT_GROWTH_FACTOR,
-            channel:  Option::None,
+            channel: Option::None,
             isem: false,
         }
     }
@@ -1676,8 +1676,8 @@ impl <'a>DirectLogFetcher<'a> {
         let mut net_len = self.log_buffer.get_uint24_pos(Self::PACKET_LEN_OFFSET)?;
         let mut net_num = self.log_buffer.get_uint8_pos(Self::PACKET_LEN_OFFSET)?;
         if !self.fetch0(Self::NET_HEADER_SIZE, net_len as usize) {
-            println!("{}",format!("Reached end of input stream: packet # {}, len = {}", net_num, net_len));
-            return  Result::Ok(false);
+            println!("{}", format!("Reached end of input stream: packet # {}, len = {}", net_num, net_len));
+            return Result::Ok(false);
         }
 
         let mark = self.log_buffer.get_uint8_pos(Self::NET_HEADER_SIZE)?;
@@ -1702,7 +1702,7 @@ impl <'a>DirectLogFetcher<'a> {
             self.log_buffer.seminal = semival;
         }
 
-        while net_len == Self::MAX_PACKET_LENGTH as u32{
+        while net_len == Self::MAX_PACKET_LENGTH as u32 {
             if !self.fetch0(0, Self::MAX_PACKET_LENGTH) {
                 println!("Reached end of input stream while fetching header");
                 return Result::Ok(false);
@@ -1724,21 +1724,25 @@ impl <'a>DirectLogFetcher<'a> {
         self.log_buffer.limit -= self.log_buffer.origin;
         Result::Ok(true)
     }
+    fn fetch0(&mut self, off: usize, len: usize) -> bool {
 
-    fn fetch0(&mut self, off: usize, len: usize) -> bool{
-        let result = self.channel.as_mut().unwrap().read_offset_len(&mut self.log_buffer.buffer, off, len);
-
-        match result {
-            Ok(size) => {
-                if self.log_buffer.limit < off + size {
-                    self.log_buffer.limit = off + size;
-                }
-                return true
-            }
-            Err(e) => {
-                return false
+        if self.log_buffer.buffer.len() < off + len {
+            for i in 0.. len + off -  self.log_buffer.buffer.len(){
+                self.log_buffer.buffer.push(0)
             }
         }
+
+        let size = self.channel.as_mut().unwrap().read_offset_len(&mut self.log_buffer.buffer, off, len).unwrap();
+
+        if self.log_buffer.limit < off + size {
+            self.log_buffer.limit = off + size;
+        }
+        return true;
+    }
+
+
+    pub fn log_buffer(&mut self) -> &mut LogBuffer {
+        &mut self.log_buffer
     }
 }
 

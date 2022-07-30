@@ -378,7 +378,10 @@ impl<'a, 'b: 'a> Packet<'b> for SemiAckCommandPacket<'a> {
         out.push(SEMI_ACK_COMMAND_PACKET);
         write_unsigned_8byte_little_endian(self.binlog_position, &mut out);
         if self.binlog_file_name.len() != 0 {
-            write_fixed_length_bytes_from_start(self.binlog_file_name.as_bytes(), self.binlog_file_name.len(), &mut out);
+
+            for byte in self.binlog_file_name.as_bytes() {
+                out.push(*byte);
+            }
         }
         Box::from(out)
     }
