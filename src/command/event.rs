@@ -1568,7 +1568,7 @@ impl QueryLogEvent {
         }
 
         let mut data_len = buffer.limit() - (common_header_len + post_header_len);
-        buffer.up_position(common_header_len + QueryLogEvent::Q_AUTO_INCREMENT as usize).unwrap();
+        buffer.up_position(common_header_len + QueryLogEvent::Q_THREAD_ID_OFFSET as usize).unwrap();
         event.session_id = buffer.get_uint32().unwrap(); // Q_THREAD_ID_OFFSET
         event.exec_time = buffer.get_uint32().unwrap();  // Q_EXEC_TIME_OFFSET
         let db_len = buffer.get_uint8().unwrap() as usize;
@@ -1607,10 +1607,12 @@ impl QueryLogEvent {
         buffer.up_position(end).unwrap();
         buffer.new_limit(limit).unwrap();
 
-        let query_len = data_len - data_len - db_len - 1;
+        let query_len = data_len - db_len - 1;
         event.dbname = buffer.get_fix_string_len(db_len + 1);
         if event.client_charset >= 0 {
             // TODO CharsetConversion
+            let position = buffer.position();
+            buffer.up_position(position + query_len);
         } else {
             buffer.get_fix_string_len(query_len);
         }
@@ -2144,6 +2146,7 @@ impl TableMapLogEvent {
             default_charset: 0,
             exist_optional_meta_data: false,
         };
+        event.event.header = header.clone();
         let common_header_len = description_event.common_header_len;
         let post_header_len = description_event.post_header_len[event.event.header.kind - 1] as usize;
         buffer.up_position(common_header_len + TableMapLogEvent::TM_MAPID_OFFSET).unwrap();
@@ -2223,33 +2226,33 @@ impl TableMapLogEvent {
                     return Result::Err(format!("unknown kind:  {}", kind));
                 }
             }
+        }
 
-            if event.exist_optional_meta_data {
-                let mut index = 0 as usize;
-                let mut char_col_index = 0;
-                let mut i = 0;
-                while i < event.column_cnt as usize {
-                    let mut cs = -1;
-                    let kind = TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta);
-                    if TableMapLogEvent::is_character_type(kind) {
-                        if let Some(paris) = &default_charset_pairs {
-                            if !paris.is_empty() {
-                                if index < paris.len() && char_col_index == paris[i].col_index {
-                                    cs = paris[i].col_charset;
-                                    index += 1;
-                                } else {
-                                    cs = event.default_charset
-                                }
-                                char_col_index += 1;
+        if event.exist_optional_meta_data {
+            let mut index = 0 as usize;
+            let mut char_col_index = 0;
+            let mut i = 0;
+            while i < event.column_cnt as usize {
+                let mut cs = -1;
+                let kind = TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta);
+                if TableMapLogEvent::is_character_type(kind) {
+                    if let Some(paris) = &default_charset_pairs {
+                        if !paris.is_empty() {
+                            if index < paris.len() && char_col_index == paris[i].col_index {
+                                cs = paris[i].col_charset;
+                                index += 1;
+                            } else {
+                                cs = event.default_charset
                             }
-                        } else if let Some(charsets) = &column_charsets {
-                            cs = charsets[index];
-                            index += 1;
+                            char_col_index += 1;
                         }
-                        (event.column_info)[i].charset = cs;
+                    } else if let Some(charsets) = &column_charsets {
+                        cs = charsets[index];
+                        index += 1;
                     }
-                    i += 1;
+                    (event.column_info)[i].charset = cs;
                 }
+                i += 1;
             }
         }
         Result::Ok(event)
@@ -2838,7 +2841,6 @@ impl WriteRowsLogEvent {
         let mut event = WriteRowsLogEvent {
             event: RowsLogEvent::from(header, buffer, description_event, false),
         };
-        event.event.event.header = header.clone();
         Option::Some(event)
     }
 

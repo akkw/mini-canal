@@ -12,6 +12,4 @@ fn main() {
     let position = Option::Some(EntryPosition::from_position(String::from("mysql-bin.000003"), 4));
     parser.set_position(position);
     parser.start();
-
-
 }

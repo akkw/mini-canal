@@ -1156,7 +1156,11 @@ impl LogBuffer {
         return self.get_fix_string_len_coding(len);
     }
 
-    pub fn get_fix_string_pos_len_coding(&mut self, pos: usize, len: usize) -> Option<String> {
+    pub fn get_fix_string_utf8(&mut self, len: usize) -> Option<String> {
+        return self.get_fix_string_len_coding(len);
+    }
+
+    pub fn get_fix_string_pos_len_coding(&mut self, pos: usize, len: usize, ) -> Option<String> {
         if self.check_pos_gre(pos, len) {
             let from = self.origin + pos;
             let end = from + len;
@@ -1218,7 +1222,7 @@ impl LogBuffer {
         Result::Ok(Option::Some(ISO_8859_1.decode(&self.buffer[self.origin + pos + 1..len], DecoderTrap::Strict).unwrap()))
     }
 
-    pub fn get_string(&self) -> Result<Option<String>, String> {
+    pub fn get_string(&mut self) -> Result<Option<String>, String> {
         if self.position >= self.origin + self.limit {
             return Result::Err(format!("limit excceed: {} ", self.position));
         }
@@ -1226,7 +1230,10 @@ impl LogBuffer {
         if self.position + len + 1 >= self.origin + self.limit {
             return Result::Err(format!("limit excceed: {} ", (self.position + len + 1 - self.origin)));
         }
-        Result::Ok(Option::Some(ISO_8859_1.decode(&self.buffer[self.position + 1..len], DecoderTrap::Strict).unwrap()))
+        let start = self.position + 1;
+        let string = ISO_8859_1.decode(&self.buffer[start..start + len], DecoderTrap::Strict).unwrap();
+        self.position += len + 1;
+        Result::Ok(Option::Some(string))
     }
 
 
@@ -1463,19 +1470,21 @@ impl LogBuffer {
     }
 
     pub fn fill_bitmap_map(&mut self, bit_map: &mut bit_set::BitSet, len: usize) -> Result<(), String> {
-        if self.position + ((len + 7) / 8) < self.origin + self.limit {
+        if self.position + ((len + 7) / 8) > self.origin + self.limit {
             return Result::Err(format!("limit excceed: {}", (self.position + (len + 7) / 8 - self.origin)));
         }
         self.position = self.fill_bit_map0_pos(bit_map, self.position, len);
         Result::Ok(())
     }
-    fn fill_bit_map0_pos(&self, bit_map: &mut bit_set::BitSet, pos: usize, len: usize) -> usize {
+    fn fill_bit_map0_pos(&self, bit_map: &mut bit_set::BitSet, mut pos: usize, len: usize) -> usize {
         let buf = self.buffer.clone();
         let mut bit = 0;
 
         while bit < len {
             let flag = ((buf[pos]) as i32) & 0xff;
+            pos+=1;
             if flag == 0 {
+                bit += 8;
                 continue;
             }
             if flag & 0x01 != 0 { bit_map.insert(bit); }
@@ -1488,7 +1497,7 @@ impl LogBuffer {
             if flag & 0x80 != 0 { bit_map.insert(bit + 7); }
             bit += 8;
         }
-        return bit_map.len();
+        return pos;
     }
 
     pub fn get_bit_map_pos(&self, pos: usize, len: usize) -> BitSet {
@@ -1533,7 +1542,7 @@ impl LogBuffer {
         if self.position + len > self.limit + self.origin {
             return Result::Err(format!("limit excceed: {}", (self.position + len - self.origin)));
         }
-        for i in self.position..dest_pos + len {
+        for i in self.position.. self.position + len {
             dest.push(self.buffer[i]);
         }
         self.position += len;

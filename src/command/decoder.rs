@@ -225,7 +225,10 @@ impl LogDecoder {
             }
             GTID_LOG_EVENT |
             ANONYMOUS_GTID_LOG_EVENT => {
-                todo!()
+                let event = GtidLogEvent::from(header, buffer, context.description_event());
+                context.position().set_position(header.log_pos() as usize);
+                // TODO
+                return LogEvent::GtidLog(event)
             }
             PREVIOUS_GTIDS_LOG_EVENT => {
                 let event = PreviousGtidsLogEvent::from(header, buffer, context.description_event());
