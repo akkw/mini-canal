@@ -8,7 +8,6 @@ use crate::command::event::LogEvent::{AppendBlockLog, BeginLoadQueryLog, CreateF
 use crate::log::log_buffer::LogBuffer;
 
 
-
 #[derive(Debug)]
 pub struct LogHeader {
     kind: usize,
@@ -41,6 +40,10 @@ impl Clone for LogHeader {
 }
 
 impl LogHeader {
+    const GTID_SET_STRING: &'static str = "gtid_str";
+    const CURRENT_GTID_STRING: &'static str = "curt_gtid";
+    const CURRENT_GTID_SN: &'static str = "curt_gtid_sn";
+    const CURRENT_GTID_LAST_COMMIT: &'static str = "curt_gtid_lct";
     pub fn new() -> Self {
         Self { kind: 0, log_pos: 0, when: 0, event_len: 0, server_id: 0, flags: 0, checksum_alg: 0, crc: 0, log_file_name: Option::Some(String::new()), gtid_map: Default::default() }
     }
@@ -218,7 +221,35 @@ impl LogHeader {
         self.gtid_map = gtid_map;
     }
 
+    pub fn gtid_set_str(&self) -> Option<String> {
+        return if let Some(s) = self.gtid_map.get(Self::GTID_SET_STRING) {
+            Some(s.into())
+        } else {
+            None
+        };
+    }
+    pub fn get_current_gtid(&self) -> Option<String> {
+        return if let Some(s) = self.gtid_map.get(Self::CURRENT_GTID_STRING) {
+            Some(s.into())
+        } else {
+            None
+        };
+    }
+    pub fn get_current_gtid_sn(&self) -> Option<String> {
+        return if let Some(s) = self.gtid_map.get(Self::CURRENT_GTID_SN) {
+            Some(s.into())
+        } else {
+            None
+        };
+    }
 
+    pub fn get_current_gtid_last_commit(&self) -> Option<String> {
+        return if let Some(s) = self.gtid_map.get(Self::CURRENT_GTID_LAST_COMMIT) {
+            Some(s.into())
+        } else {
+            None
+        };
+    }
 
 }
 
@@ -537,8 +568,12 @@ impl Event {
             _ => format!("Unknown type=> {}", t)
         }
     }
-    pub fn header(&mut self) -> &mut LogHeader {
+    pub fn header_mut(&mut self) -> &mut LogHeader {
         &mut self.header
+    }
+
+    pub fn header(&self) -> &LogHeader {
+        &self.header
     }
     pub fn semival(&self) -> u8 {
         self.semival
@@ -619,6 +654,7 @@ impl AppendBlockLogEvent {
         Self { event: Event::new(), block_buf: LogBuffer::new(), block_len: 0, filed_id: 0 }
     }
 }
+
 #[derive(Debug)]
 pub struct BeginLoadQueryLogEvent {
     append_block_log_event: AppendBlockLogEvent,
@@ -631,6 +667,7 @@ impl BeginLoadQueryLogEvent {
         }
     }
 }
+
 #[derive(Debug)]
 pub struct CreateFileLogEvent {
     event: Event,
@@ -682,6 +719,7 @@ impl CreateFileLogEvent {
         self.block_buf.get_data()
     }
 }
+
 #[derive(Debug)]
 pub struct DeleteFileLogEvent {
     event: Event,
@@ -707,6 +745,7 @@ impl DeleteFileLogEvent {
         self.filed_id
     }
 }
+
 #[derive(Debug)]
 pub struct DeleteRowsLogEvent {
     rows_log_event: RowsLogEvent,
@@ -723,6 +762,7 @@ impl DeleteRowsLogEvent {
         &mut self.rows_log_event
     }
 }
+
 #[derive(Debug)]
 pub struct ExecuteLoadLogEvent {
     event: Event,
@@ -748,6 +788,7 @@ impl ExecuteLoadLogEvent {
         self.file_id
     }
 }
+
 #[derive(Debug)]
 pub struct ExecuteLoadQueryLogEvent {
     query_log_event: QueryLogEvent,
@@ -758,7 +799,6 @@ pub struct ExecuteLoadQueryLogEvent {
 }
 
 impl ExecuteLoadQueryLogEvent {
-
     const LOAD_DUP_ERROR: u8 = 0;
     const LOAD_DUP_IGNORE: u8 = Self::LOAD_DUP_ERROR + 1;
     const LOAD_DUP_REPLACE: u8 = Self::LOAD_DUP_IGNORE + 1;
@@ -824,7 +864,6 @@ impl Clone for FormatDescriptionLogEvent {
 }
 
 impl FormatDescriptionLogEvent {
-
     pub const ST_SERVER_VER_LEN: usize = 50;
     pub const ST_BINLOG_VER_OFFSET: u8 = 0;
     pub const ST_SERVER_VER_OFFSET: u8 = 2;
@@ -871,7 +910,6 @@ impl FormatDescriptionLogEvent {
     pub const CHECKSUM_VERSION_SPLIT: [u8; 3] = [5, 6, 1];
     pub const CHECKSUM_VERSION_PRODUCT: u32 = ((FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[0] as u32 * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[1] as u32) * 256 + FormatDescriptionLogEvent::CHECKSUM_VERSION_SPLIT[2] as u32) as u32;
     #[allow(arithmetic_overflow)]
-
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Result<FormatDescriptionLogEvent, String> {
         let mut event = FormatDescriptionLogEvent {
             start_log_event_v3: StartLogEventV3::from(header, buffer, description_event).unwrap(),
@@ -958,7 +996,7 @@ impl FormatDescriptionLogEvent {
                 event.post_header_len[Event::ROWS_QUERY_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
                 event.post_header_len[Event::WRITE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
                 event.post_header_len[Event::UPDATE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
-                event.post_header_len[Event::DELETE_ROWS_EVENT- 1] = Self::ROWS_HEADER_LEN_V2;
+                event.post_header_len[Event::DELETE_ROWS_EVENT - 1] = Self::ROWS_HEADER_LEN_V2;
                 event.post_header_len[Event::GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
                 event.post_header_len[Event::ANONYMOUS_GTID_LOG_EVENT - 1] = Self::POST_HEADER_LENGTH;
                 event.post_header_len[Event::PREVIOUS_GTIDS_LOG_EVENT - 1] = Self::IGNORABLE_HEADER_LEN;
@@ -1035,7 +1073,7 @@ impl FormatDescriptionLogEvent {
                     if !char.is_ascii_digit() {
                         break;
                     }
-                    j+=1;
+                    j += 1;
                 }
                 if j > 0 {
                     server_version_split[i] = str[0..j].parse::<u8>().unwrap();
@@ -1068,6 +1106,7 @@ impl FormatDescriptionLogEvent {
         &mut self.start_log_event_v3
     }
 }
+
 #[derive(Debug)]
 pub struct GtidLogEvent {
     event: Event,
@@ -1136,6 +1175,7 @@ impl GtidLogEvent {
         gtid
     }
 }
+
 #[derive(Debug)]
 pub struct HeartbeatLogEvent {
     event: Event,
@@ -1165,6 +1205,7 @@ impl HeartbeatLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct IgnorableLogEvent {
     event: Event,
@@ -1179,6 +1220,7 @@ impl IgnorableLogEvent {
         event
     }
 }
+
 #[derive(Debug)]
 pub struct IncidentLogEvent {
     event: Event,
@@ -1221,6 +1263,7 @@ impl IncidentLogEvent {
         &self.message
     }
 }
+
 #[derive(Debug)]
 pub struct InvarianceLogEvent {
     event: Event,
@@ -1251,6 +1294,7 @@ impl InvarianceLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct LoadLogEvent {
     event: Event,
@@ -1398,7 +1442,7 @@ pub struct QueryLogEvent {
     time_zone: Option<String>,
 }
 
-impl Clone for QueryLogEvent{
+impl Clone for QueryLogEvent {
     fn clone(&self) -> Self {
         Self {
             event: self.event.clone(),
@@ -1420,7 +1464,7 @@ impl Clone for QueryLogEvent{
             tv_sec: self.tv_sec,
             ddl_xid: self.ddl_xid,
             charset_name: self.charset_name.clone(),
-            time_zone: self.time_zone.clone()
+            time_zone: self.time_zone.clone(),
         }
     }
 }
@@ -1738,6 +1782,10 @@ impl QueryLogEvent {
     pub fn event(&self) -> &Event {
         &self.event
     }
+
+    pub fn event_mut(&mut self) -> &mut Event {
+        &mut self.event
+    }
     pub fn user(&self) -> &Option<String> {
         &self.user
     }
@@ -1821,6 +1869,7 @@ impl QueryLogEvent {
         }
     }
 }
+
 #[derive(Debug)]
 pub struct RandLogEvent {
     event: Event,
@@ -1848,6 +1897,7 @@ impl RandLogEvent {
         String::from(format!("SET SESSION rand_seed1 = {} , rand_seed2 = {}", self.seed1, self.seed2))
     }
 }
+
 #[derive(Debug)]
 pub struct RotateLogEvent {
     event: Event,
@@ -1893,10 +1943,12 @@ impl RotateLogEvent {
         self.position
     }
 }
+
 #[derive(Debug)]
 pub struct RowsLogBuffer {
-    event: Event
+    event: Event,
 }
+
 #[derive(Debug)]
 pub struct RowsLogEvent {
     event: Event,
@@ -2032,6 +2084,7 @@ impl RowsLogEvent {
         }
     }
 }
+
 #[derive(Debug)]
 pub struct RowsQueryLogEvent {
     ignorable_log_event: IgnorableLogEvent,
@@ -2057,6 +2110,7 @@ impl RowsQueryLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct StartLogEventV3 {
     event: Event,
@@ -2069,7 +2123,7 @@ impl Clone for StartLogEventV3 {
         Self {
             event: self.event.clone(),
             binlog_version: self.binlog_version,
-            server_version: self.server_version.clone()
+            server_version: self.server_version.clone(),
         }
     }
 }
@@ -2118,6 +2172,7 @@ impl StartLogEventV3 {
         &mut self.event
     }
 }
+
 #[derive(Debug)]
 pub struct StopLogEvent {
     event: Event,
@@ -2132,6 +2187,7 @@ impl StopLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct TableMapLogEvent {
     event: Event,
@@ -2598,6 +2654,7 @@ impl TableMapLogEvent {
         }
     }
 }
+
 #[derive(Debug)]
 pub struct ColumnInfo {
     kind: u8,
@@ -2648,6 +2705,7 @@ impl Clone for ColumnInfo {
         }
     }
 }
+
 #[derive(Debug)]
 struct Pair {
     col_index: i32,
@@ -2667,6 +2725,7 @@ impl Display for ColumnInfo {
                , self.kind, self.meta, self.name, self.unsigned, self.pk, self.set_enum_values, self.charset, self.geo_type, self.nullable, self.visibility, self.array)
     }
 }
+
 #[derive(Debug)]
 pub struct TransactionContextLogEvent {
     event: Event,
@@ -2681,6 +2740,7 @@ impl TransactionContextLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct TransactionPayloadLogEvent {
     event: Event,
@@ -2695,6 +2755,7 @@ impl TransactionPayloadLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct UnknownLogEvent {
     event: Event,
@@ -2709,6 +2770,7 @@ impl UnknownLogEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct UpdateRowsLogEvent {
     rows_log_event: RowsLogEvent,
@@ -2736,6 +2798,7 @@ impl UpdateRowsLogEvent {
         &mut self.rows_log_event
     }
 }
+
 #[derive(Debug)]
 pub struct UserVarLogEvent {
     event: Event,
@@ -2845,6 +2908,7 @@ impl UserVarLogEvent {
         }
     }
 }
+
 #[derive(Debug)]
 pub struct ViewChangeEvent {
     event: Event,
@@ -2859,6 +2923,7 @@ impl ViewChangeEvent {
         Option::Some(event)
     }
 }
+
 #[derive(Debug)]
 pub struct WriteRowsLogEvent {
     event: RowsLogEvent,
@@ -2877,6 +2942,7 @@ impl WriteRowsLogEvent {
         &mut self.event
     }
 }
+
 #[derive(Debug)]
 pub struct XaPrepareLogEvent {
     event: Event,
@@ -2914,8 +2980,8 @@ impl XaPrepareLogEvent {
         let MY_XIDDATASIZE = 128;
 
         if MY_XIDDATASIZE >= event.gtrid_length + event.bqual_length
-            && event.gtrid_length >= 0 && event.gtrid_length <=64
-            && event.bqual_length >= 0 &&event.bqual_length >= 64{
+            && event.gtrid_length >= 0 && event.gtrid_length <= 64
+            && event.bqual_length >= 0 && event.bqual_length >= 64 {
             event.data = buffer.get_data_len(event.gtrid_length as usize + event.bqual_length as usize);
         } else {
             event.format_id = -1;
@@ -2941,22 +3007,23 @@ impl XaPrepareLogEvent {
         &self.data
     }
 }
+
 #[derive(Debug)]
 pub struct XidLogEvent {
     event: Event,
-    xid: i64
+    xid: i64,
 }
 
 
 impl XidLogEvent {
-
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = XidLogEvent {
             event: Event::new(),
-            xid: 0
+            xid: 0,
         };
         event.event.header = header.clone();
-        buffer.up_position(description_event.common_header_len + description_event.post_header_len[Event::XID_EVENT -1] as usize);
+        buffer.up_position(description_event.common_header_len + description_event.post_header_len[Event::XID_EVENT - 1] as usize);
+        event.xid = buffer.get_int64().unwrap();
         Option::Some(event)
     }
 
@@ -2965,6 +3032,7 @@ impl XidLogEvent {
         self.xid
     }
 }
+
 #[derive(Debug)]
 pub enum LogEvent {
     Null(Option<()>),
@@ -3005,188 +3073,188 @@ pub enum LogEvent {
 
 
 impl LogEvent {
-    pub fn rows_log_event(&self) -> Option<&RowsLogEvent>{
+    pub fn rows_log_event(&self) -> Option<&RowsLogEvent> {
         match self {
-            LogEvent::RowsLog(e)=> {
+            LogEvent::RowsLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn rand_log_event(&self) -> Option<&RandLogEvent>{
+    pub fn rand_log_event(&self) -> Option<&RandLogEvent> {
         match self {
-            LogEvent::RandLog(e)=> {
+            LogEvent::RandLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn query_log_event(&self) -> Option<&QueryLogEvent>{
+    pub fn query_log_event(&self) -> Option<&QueryLogEvent> {
         match self {
-            LogEvent::QueryLog(e)=> {
+            LogEvent::QueryLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn previous_gtids_log_event(&self) -> Option<&PreviousGtidsLogEvent>{
+    pub fn previous_gtids_log_event(&self) -> Option<&PreviousGtidsLogEvent> {
         match self {
-            LogEvent::PreviousGtidsLog(e)=> {
+            LogEvent::PreviousGtidsLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn load_log_event(&self) -> Option<&LoadLogEvent>{
+    pub fn load_log_event(&self) -> Option<&LoadLogEvent> {
         match self {
-            LogEvent::LoadLog(e)=> {
+            LogEvent::LoadLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn incident_log_event(&self) -> Option<&IncidentLogEvent>{
+    pub fn incident_log_event(&self) -> Option<&IncidentLogEvent> {
         match self {
-            LogEvent::IncidentLog(e)=> {
+            LogEvent::IncidentLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn ignorable_log_event(&self) -> Option<&IgnorableLogEvent>{
+    pub fn ignorable_log_event(&self) -> Option<&IgnorableLogEvent> {
         match self {
-            LogEvent::IgnorableLog(e)=> {
+            LogEvent::IgnorableLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
 
-    pub fn heartbeat_log_event(&self) -> Option<&HeartbeatLogEvent>{
+    pub fn heartbeat_log_event(&self) -> Option<&HeartbeatLogEvent> {
         match self {
-            LogEvent::HeartbeatLog(e)=> {
+            LogEvent::HeartbeatLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
-    pub fn gtid_log_event(&self) -> Option<&GtidLogEvent>{
+    pub fn gtid_log_event(&self) -> Option<&GtidLogEvent> {
         match self {
-            LogEvent::GtidLog(e)=> {
+            LogEvent::GtidLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
-                Option::None
-            }
-        }
-    }
-
-    pub fn format_description_log_event(&self) -> Option<&FormatDescriptionLogEvent>{
-        match self {
-            LogEvent::FormatDescriptionLog(e)=> {
-                Option::Some(e)
-            }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn execute_load_query_log_event(&self) -> Option<&ExecuteLoadQueryLogEvent>{
+    pub fn format_description_log_event(&self) -> Option<&FormatDescriptionLogEvent> {
         match self {
-            LogEvent::ExecuteLoadQueryLog(e)=> {
+            LogEvent::FormatDescriptionLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn execute_load_log_event(&self) -> Option<&ExecuteLoadLogEvent>{
+    pub fn execute_load_query_log_event(&self) -> Option<&ExecuteLoadQueryLogEvent> {
         match self {
-            LogEvent::ExecuteLoadLog(e)=> {
+            LogEvent::ExecuteLoadQueryLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn delete_rows_log_event(&self) -> Option<&DeleteRowsLogEvent>{
+    pub fn execute_load_log_event(&self) -> Option<&ExecuteLoadLogEvent> {
         match self {
-            LogEvent::DeleteRowsLog(e)=> {
+            LogEvent::ExecuteLoadLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn delete_file_log_event(&self) -> Option<&DeleteFileLogEvent>{
+    pub fn delete_rows_log_event(&self) -> Option<&DeleteRowsLogEvent> {
         match self {
-            LogEvent::DeleteFileLog(e)=> {
+            LogEvent::DeleteRowsLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn create_file_log_event(&self) -> Option<&CreateFileLogEvent>{
+    pub fn delete_file_log_event(&self) -> Option<&DeleteFileLogEvent> {
         match self {
-            LogEvent::CreateFileLog(e)=> {
+            LogEvent::DeleteFileLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn begin_load_query_log_event(&self) -> Option<&BeginLoadQueryLogEvent>{
+    pub fn create_file_log_event(&self) -> Option<&CreateFileLogEvent> {
         match self {
-            LogEvent::BeginLoadQueryLog(e)=> {
+            LogEvent::CreateFileLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
                 Option::None
             }
         }
     }
 
-    pub fn append_block_log_event(&self) -> Option<&AppendBlockLogEvent>{
+    pub fn begin_load_query_log_event(&self) -> Option<&BeginLoadQueryLogEvent> {
         match self {
-            LogEvent::AppendBlockLog(e)=> {
+            LogEvent::BeginLoadQueryLog(e) => {
                 Option::Some(e)
             }
-            _ =>{
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn append_block_log_event(&self) -> Option<&AppendBlockLogEvent> {
+        match self {
+            LogEvent::AppendBlockLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
                 Option::None
             }
         }
@@ -3194,8 +3262,7 @@ impl LogEvent {
 }
 
 impl LogEvent {
-
-    pub fn header_mut(&mut self) -> Option<&mut LogHeader>{
+    pub fn header_mut(&mut self) -> Option<&mut LogHeader> {
         return match self {
             LogEvent::AppendBlockLog(ref mut event) => {
                 Option::Some(&mut event.event.header)
@@ -3302,11 +3369,11 @@ impl LogEvent {
             _ => {
                 Option::None
             }
-        }
+        };
     }
 
 
-    pub fn event_mut(&mut self) -> Option<&mut Event>{
+    pub fn event_mut(&mut self) -> Option<&mut Event> {
         return match self {
             LogEvent::AppendBlockLog(ref mut event) => {
                 Option::Some(&mut event.event)
@@ -3413,7 +3480,7 @@ impl LogEvent {
             _ => {
                 Option::None
             }
-        }
+        };
     }
 }
 

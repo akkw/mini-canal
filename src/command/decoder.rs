@@ -72,7 +72,7 @@ impl LogDecoder {
     pub fn decode_event(buffer: &mut LogBuffer, header: &LogHeader, context: &mut LogContext) -> LogEvent {
         let checksum_alg;
         if header.kind() != Event::FORMAT_DESCRIPTION_EVENT {
-            checksum_alg = context.description_event().start_log_event_v3().event().header().checksum_alg();
+            checksum_alg = context.description_event().start_log_event_v3().event().header_mut().checksum_alg();
         } else {
             checksum_alg = header.checksum_alg();
         }
@@ -115,6 +115,7 @@ impl LogDecoder {
                 let mut event = DeleteRowsLogEvent::from(header, buffer, context.description_event()).unwrap();
                 context.position().set_position(header.log_pos() as usize);
                 event.rows_log_event_mut().fill_table(context);
+                return LogEvent::DeleteRowsLog(event)
             }
             Event::ROTATE_EVENT => {
                 let event = RotateLogEvent::from(header, buffer, context.description_event()).unwrap();
