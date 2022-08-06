@@ -7,8 +7,8 @@ use crate::command::{msc, Packet, write_header_and_body};
 use crate::command::server::{*};
 use crate::utils::mysql_password_encrypted::{*};
 use crate::command::client::{*};
-use crate::command::decoder::LogDecoder;
-use crate::command::event::{Event, FormatDescriptionLogEvent, LogContext};
+use crate::log::decoder::LogDecoder;
+use crate::log::event::{Event, FormatDescriptionLogEvent, LogContext};
 use crate::log::log_buffer::DirectLogFetcher;
 use crate::parse::support::AuthenticationInfo;
 

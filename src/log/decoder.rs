@@ -1,6 +1,6 @@
 use bit_set::BitSet;
-use crate::command::event::{*};
-use crate::command::event::LogEvent::UnknownLog;
+use crate::log::event::{*};
+use crate::log::event::LogEvent::UnknownLog;
 use crate::log::log_buffer::LogBuffer;
 
 pub struct LogDecoder {

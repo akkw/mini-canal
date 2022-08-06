@@ -1,7 +1,10 @@
+use std::time::{Duration, UNIX_EPOCH};
 use bit_set::BitSet;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use str_utils::{StartsWithIgnoreAsciiCase, StartsWithIgnoreCase};
 use substring::Substring;
 use mini_canal::instance::running::MysqlEventParser;
+use mini_canal::log::event::Serializable;
 use mini_canal::log::metadata::EntryPosition;
 use mini_canal::parse::support::AuthenticationInfo;
 
@@ -15,5 +18,4 @@ fn main() {
     // let position = Option::Some(EntryPosition::from_position(String::from("mysql-bin.000003"), 4));
     // parser.set_position(position);
     // parser.start();
-
 }

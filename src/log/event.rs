@@ -3,9 +3,11 @@ use std::fmt::{Display, Formatter};
 use bigdecimal::BigDecimal;
 use bit_set::BitSet;
 use uuid::Uuid;
-use crate::command::{event, get_i64};
-use crate::command::event::LogEvent::{AppendBlockLog, BeginLoadQueryLog, CreateFileLog};
+use crate::command::get_i64;
+use crate::log::event::LogEvent::{AppendBlockLog, BeginLoadQueryLog, CreateFileLog};
+use crate::log::event;
 use crate::log::log_buffer::LogBuffer;
+use crate::StringResult;
 
 
 #[derive(Debug)]
@@ -250,7 +252,6 @@ impl LogHeader {
             None
         };
     }
-
 }
 
 #[derive(Debug)]
@@ -488,40 +489,40 @@ impl Event {
     pub const LOG_EVENT_IGNORABLE_F: u8 = 0x80;
 
     /** enum_field_types */
-    pub const MYSQL_TYPE_DECIMAL: u8 = 0;
-    pub const MYSQL_TYPE_TINY: u8 = 1;
-    pub const MYSQL_TYPE_SHORT: u8 = 2;
-    pub const MYSQL_TYPE_LONG: u8 = 3;
-    pub const MYSQL_TYPE_FLOAT: u8 = 4;
-    pub const MYSQL_TYPE_DOUBLE: u8 = 5;
-    pub const MYSQL_TYPE_NULL: u8 = 6;
-    pub const MYSQL_TYPE_TIMESTAMP: u8 = 7;
-    pub const MYSQL_TYPE_LONGLONG: u8 = 8;
-    pub const MYSQL_TYPE_INT24: u8 = 9;
-    pub const MYSQL_TYPE_DATE: u8 = 10;
-    pub const MYSQL_TYPE_TIME: u8 = 11;
-    pub const MYSQL_TYPE_DATETIME: u8 = 12;
-    pub const MYSQL_TYPE_YEAR: u8 = 13;
-    pub const MYSQL_TYPE_NEWDATE: u8 = 14;
-    pub const MYSQL_TYPE_VARCHAR: u8 = 15;
-    pub const MYSQL_TYPE_BIT: u8 = 16;
-    pub const MYSQL_TYPE_TIMESTAMP2: u8 = 17;
-    pub const MYSQL_TYPE_DATETIME2: u8 = 18;
-    pub const MYSQL_TYPE_TIME2: u8 = 19;
-    pub const MYSQL_TYPE_TYPED_ARRAY: u8 = 20;
-    pub const MYSQL_TYPE_INVALID: u8 = 243;
-    pub const MYSQL_TYPE_BOOL: u8 = 244;
-    pub const MYSQL_TYPE_JSON: u8 = 245;
-    pub const MYSQL_TYPE_NEWDECIMAL: u8 = 246;
-    pub const MYSQL_TYPE_ENUM: u8 = 247;
-    pub const MYSQL_TYPE_SET: u8 = 248;
-    pub const MYSQL_TYPE_TINY_BLOB: u8 = 249;
-    pub const MYSQL_TYPE_MEDIUM_BLOB: u8 = 250;
-    pub const MYSQL_TYPE_LONG_BLOB: u8 = 251;
-    pub const MYSQL_TYPE_BLOB: u8 = 252;
-    pub const MYSQL_TYPE_VAR_STRING: u8 = 253;
-    pub const MYSQL_TYPE_STRING: u8 = 254;
-    pub const MYSQL_TYPE_GEOMETRY: u8 = 255;
+    pub const MYSQL_TYPE_DECIMAL: i32 = 0;
+    pub const MYSQL_TYPE_TINY: i32 = 1;
+    pub const MYSQL_TYPE_SHORT: i32 = 2;
+    pub const MYSQL_TYPE_LONG: i32 = 3;
+    pub const MYSQL_TYPE_FLOAT: i32 = 4;
+    pub const MYSQL_TYPE_DOUBLE: i32 = 5;
+    pub const MYSQL_TYPE_NULL: i32 = 6;
+    pub const MYSQL_TYPE_TIMESTAMP: i32 = 7;
+    pub const MYSQL_TYPE_LONGLONG: i32 = 8;
+    pub const MYSQL_TYPE_INT24: i32 = 9;
+    pub const MYSQL_TYPE_DATE: i32 = 10;
+    pub const MYSQL_TYPE_TIME: i32 = 11;
+    pub const MYSQL_TYPE_DATETIME: i32 = 12;
+    pub const MYSQL_TYPE_YEAR: i32 = 13;
+    pub const MYSQL_TYPE_NEWDATE: i32 = 14;
+    pub const MYSQL_TYPE_VARCHAR: i32 = 15;
+    pub const MYSQL_TYPE_BIT: i32 = 16;
+    pub const MYSQL_TYPE_TIMESTAMP2: i32 = 17;
+    pub const MYSQL_TYPE_DATETIME2: i32 = 18;
+    pub const MYSQL_TYPE_TIME2: i32 = 19;
+    pub const MYSQL_TYPE_TYPED_ARRAY: i32 = 20;
+    pub const MYSQL_TYPE_INVALID: i32 = 243;
+    pub const MYSQL_TYPE_BOOL: i32 = 244;
+    pub const MYSQL_TYPE_JSON: i32 = 245;
+    pub const MYSQL_TYPE_NEWDECIMAL: i32 = 246;
+    pub const MYSQL_TYPE_ENUM: i32 = 247;
+    pub const MYSQL_TYPE_SET: i32 = 248;
+    pub const MYSQL_TYPE_TINY_BLOB: i32 = 249;
+    pub const MYSQL_TYPE_MEDIUM_BLOB: i32 = 250;
+    pub const MYSQL_TYPE_LONG_BLOB: i32 = 251;
+    pub const MYSQL_TYPE_BLOB: i32 = 252;
+    pub const MYSQL_TYPE_VAR_STRING: i32 = 253;
+    pub const MYSQL_TYPE_STRING: i32 = 254;
+    pub const MYSQL_TYPE_GEOMETRY: i32 = 255;
 
     fn get_type_name(t: usize) -> String {
         match t {
@@ -760,6 +761,10 @@ impl DeleteRowsLogEvent {
 
     pub fn rows_log_event_mut(&mut self) -> &mut RowsLogEvent {
         &mut self.rows_log_event
+    }
+
+    pub fn rows_log_event(&self) -> &RowsLogEvent {
+        &self.rows_log_event
     }
 }
 
@@ -2083,6 +2088,36 @@ impl RowsLogEvent {
             flags: 0,
         }
     }
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+    pub fn table_id(&self) -> u64 {
+        self.table_id
+    }
+    pub fn table_map_log_event(&self) -> &TableMapLogEvent {
+        &self.table_map_log_event
+    }
+    pub fn column_len(&self) -> usize {
+        self.column_len
+    }
+    pub fn partial(&self) -> bool {
+        self.partial
+    }
+    pub fn columns(&self) -> &BitSet {
+        &self.columns
+    }
+    pub fn change_columns(&self) -> &BitSet {
+        &self.change_columns
+    }
+    pub fn json_column_count(&self) -> i32 {
+        self.json_column_count
+    }
+    pub fn rows_buf(&self) -> &LogBuffer {
+        &self.rows_buf
+    }
+    pub fn flags(&self) -> u16 {
+        self.flags
+    }
 }
 
 #[derive(Debug)]
@@ -2251,7 +2286,7 @@ impl TableMapLogEvent {
         let mut i = 0;
         while i < event.column_cnt {
             let mut info = ColumnInfo::new();
-            info.kind = buffer.get_uint8().unwrap();
+            info.kind = buffer.get_uint8().unwrap() as i32;
             event.column_info.push(info);
             i += 1;
         }
@@ -2351,7 +2386,7 @@ impl TableMapLogEvent {
             let info = &mut event.column_info[i];
             let mut binlog_type = info.kind;
             if binlog_type == Event::MYSQL_TYPE_TYPED_ARRAY {
-                binlog_type = buffer.get_uint8().unwrap();
+                binlog_type = buffer.get_uint8().unwrap() as i32;
             }
 
             match binlog_type {
@@ -2366,21 +2401,21 @@ impl TableMapLogEvent {
                 Event::MYSQL_TYPE_DATETIME2 |
                 Event::MYSQL_TYPE_TIMESTAMP2 |
                 Event::MYSQL_TYPE_JSON => {
-                    info.meta = buffer.get_uint8().unwrap() as u16;
+                    info.meta = buffer.get_uint8().unwrap()  as i32;
                 }
                 Event::MYSQL_TYPE_SET |
                 Event::MYSQL_TYPE_ENUM |
                 Event::MYSQL_TYPE_STRING |
                 Event::MYSQL_TYPE_NEWDECIMAL => {
-                    let mut x = (buffer.get_uint8().unwrap() as u16) << 8;
-                    x += buffer.get_uint8().unwrap() as u16;
+                    let mut x = (buffer.get_uint8().unwrap() as i32) << 8;
+                    x += buffer.get_uint8().unwrap() as i32;
                     info.meta = x;
                 }
                 Event::MYSQL_TYPE_BIT => {
-                    info.meta = buffer.get_uint16().unwrap();
+                    info.meta = buffer.get_uint16().unwrap()  as i32;
                 }
                 Event::MYSQL_TYPE_VARCHAR => {
-                    info.meta = buffer.get_uint16().unwrap();
+                    info.meta = buffer.get_uint16().unwrap() as i32;
                 }
                 _ => {
                     info.meta = 0;
@@ -2487,11 +2522,11 @@ impl TableMapLogEvent {
         let mut index = 0;
         let mut i = 0;
         while i < event.column_cnt as usize {
-            if set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == Event::MYSQL_TYPE_SET {
+            if set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == Event::MYSQL_TYPE_SET{
                 event.column_info[i].set_enum_values = datas[index].clone();
                 index += 1;
             }
-            if !set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == Event::MYSQL_TYPE_ENUM {
+            if !set && TableMapLogEvent::get_real_type(event.column_info[i].kind, event.column_info[i].meta) == Event::MYSQL_TYPE_ENUM{
                 event.column_info[i].set_enum_values = datas[index].clone();
                 index += 1;
             }
@@ -2540,7 +2575,7 @@ impl TableMapLogEvent {
         }
     }
 
-    fn is_numeric_type(kind: u8) -> bool {
+    fn is_numeric_type(kind: i32) -> bool {
         match kind {
             Event::MYSQL_TYPE_TINY |
             Event::MYSQL_TYPE_SHORT |
@@ -2554,7 +2589,7 @@ impl TableMapLogEvent {
         }
     }
 
-    fn is_character_type(kind: u8) -> bool {
+    fn is_character_type(kind: i32) -> bool {
         match kind {
             Event::MYSQL_TYPE_STRING |
             Event::MYSQL_TYPE_VAR_STRING |
@@ -2564,10 +2599,10 @@ impl TableMapLogEvent {
         }
     }
 
-    fn get_real_type(mut kind: u8, meta: u16) -> u8 {
+    fn get_real_type(mut kind: i32, meta: i32) -> i32 {
         if kind == Event::MYSQL_TYPE_STRING {
             if meta >= 256 {
-                let byte0 = (meta >> 8) as u8;
+                let byte0 = meta >> 8;
                 if byte0 & 0x30 != 0x30 {
                     kind = byte0 | 0x30;
                 } else {
@@ -2657,8 +2692,8 @@ impl TableMapLogEvent {
 
 #[derive(Debug)]
 pub struct ColumnInfo {
-    kind: u8,
-    meta: u16,
+    kind: i32,
+    meta: i32,
     name: String,
     unsigned: bool,
     pk: bool,
@@ -2850,13 +2885,13 @@ impl UserVarLogEvent {
 
             match event.kind {
                 Self::REAL_RESULT => {
-                    event.value = Serializable::Double(buffer.get_double64())
+                    event.value = Serializable::F64(buffer.get_double64())
                 }
                 Self::INT_RESULT => {
                     if value_len == 8 {
-                        event.value = Serializable::Long(buffer.get_int64().ok()?)
+                        event.value = Serializable::I64(buffer.get_int64().ok()?)
                     } else if value_len == 4 {
-                        event.value = Serializable::Long(buffer.get_uint32().ok()? as i64);
+                        event.value = Serializable::I64(buffer.get_uint32().ok()? as i64);
                     } else {
                         println!("Error INT_RESULT length: {}", value_len);
                         return Option::None;
@@ -2882,29 +2917,32 @@ impl UserVarLogEvent {
         }
         Option::Some(event)
     }
-    pub fn get_query(&self) -> String {
+    pub fn get_query(&self) -> Option<String> {
         if Serializable::Null == self.value {
-            return String::from(format!("SET @{} := NULL", self.name.as_ref().unwrap()));
+            return Option::Some(String::from(format!("SET @{} := NULL", self.name.as_ref().unwrap())));
         } else if self.kind == Self::STRING_RESULT {
             return match &self.value {
                 Serializable::BigDecimal(d) => {
-                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d.to_string()))
+                    Option::Some(String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d.to_string())))
                 }
                 Serializable::String(s) => {
-                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), s))
+                    Option::Some(String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), s)))
                 }
-                Serializable::Double(d) => {
-                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d))
+                Serializable::F64(d) => {
+                   Option::Some( String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d)))
                 }
-                Serializable::Long(d) => {
-                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d))
+                Serializable::I64(d) => {
+                    Option::Some(String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), d)))
                 }
                 Serializable::Null => {
-                    String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), String::from("empty")))
+                    Option::Some(String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), String::from("empty"))))
+                }
+                _ => {
+                    Option::None
                 }
             };
         } else {
-            String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), self.value))
+            Option::Some(String::from(format!("SET @ {} := \'{}\'", self.name.as_ref().unwrap(), self.value)))
         }
     }
 }
@@ -2941,7 +2979,12 @@ impl WriteRowsLogEvent {
     pub fn event_mut(&mut self) -> &mut RowsLogEvent {
         &mut self.event
     }
+
+    pub fn event(&self) -> &RowsLogEvent {
+        &self.event
+    }
 }
+
 
 #[derive(Debug)]
 pub struct XaPrepareLogEvent {
@@ -3031,6 +3074,13 @@ impl XidLogEvent {
     pub fn xid(&self) -> i64 {
         self.xid
     }
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+
+    pub fn event_mut(&mut self) -> &mut Event {
+        &mut self.event
+    }
 }
 
 #[derive(Debug)]
@@ -3073,6 +3123,139 @@ pub enum LogEvent {
 
 
 impl LogEvent {
+    pub fn xid_log_event(&self) -> Option<&XidLogEvent> {
+        match self {
+            LogEvent::XidLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn xa_prepare_log_event(&self) -> Option<&XaPrepareLogEvent> {
+        match self {
+            LogEvent::XaPrepareLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn write_rows_log_event(&self) -> Option<&WriteRowsLogEvent> {
+        match self {
+            LogEvent::WriteRowsLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+
+
+    pub fn view_change_event(&self) -> Option<&ViewChangeEvent> {
+        match self {
+            LogEvent::ViewChange(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn user_var_log_event(&self) -> Option<&UserVarLogEvent> {
+        match self {
+            LogEvent::UserVarLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn unknown_log_event(&self) -> Option<&UnknownLogEvent> {
+        match self {
+            LogEvent::UnknownLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn transaction_payload_log_event(&self) -> Option<&TransactionPayloadLogEvent> {
+        match self {
+            LogEvent::TransactionPayloadLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn transaction_context_log_event(&self) -> Option<&TransactionContextLogEvent> {
+        match self {
+            LogEvent::TransactionContextLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn table_map_log_event_mut(&mut self) -> Option<&mut TableMapLogEvent> {
+        match self {
+            LogEvent::TableMapLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn stop_log_event(&self) -> Option<&StopLogEvent> {
+        match self {
+            LogEvent::StopLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
+    pub fn start_log_event_v3(&self) -> Option<&StartLogEventV3> {
+        match self {
+            LogEvent::StartLogV3(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+    pub fn rows_query_log_event(&self) -> Option<&RowsQueryLogEvent> {
+        match self {
+            LogEvent::RowsQueryLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
     pub fn rows_log_event(&self) -> Option<&RowsLogEvent> {
         match self {
             LogEvent::RowsLog(e) => {
@@ -3609,15 +3792,69 @@ impl Display for LogPosition {
 }
 
 
-type StringResult<T> = Result<T, String>;
+
 
 #[derive(Debug)]
-enum Serializable {
+pub enum Serializable {
     String(String),
-    Double(f64),
-    Long(i64),
+    F64(f64),
+    I64(i64),
+    I32(i32),
+    I16(i16),
+    I8(i8),
+    U64(u64),
+    U32(u32),
+    U16(u16),
+    U8(u8),
+    BYTES(Vec<u8>),
     BigDecimal(BigDecimal),
     Null,
+}
+
+impl Clone for Serializable {
+    fn clone(&self) -> Self {
+        match self {
+            Serializable::String(s) => {
+                Serializable::String(s.clone())
+            }
+            Serializable::F64(s) => {
+                Serializable::F64(*s)
+            }
+            Serializable::I64(s) => {
+                Serializable::I64(*s)
+            }
+            Serializable::I32(s) => {
+                Serializable::I32(*s)
+            }
+            Serializable::I16(s) => {
+                Serializable::I16(*s)
+            }
+            Serializable::I8(s) => {
+                Serializable::I8(*s)
+            }
+            Serializable::U64(s) => {
+                Serializable::U64(*s)
+            }
+            Serializable::U32(s) => {
+                Serializable::U32(*s)
+            }
+            Serializable::U16(s) => {
+                Serializable::U16(*s)
+            }
+            Serializable::U8(s) => {
+                Serializable::U8(*s)
+            }
+            Serializable::BYTES(bytes) => {
+                Serializable::BYTES(bytes.clone())
+            }
+            Serializable::BigDecimal(big) => {
+                Serializable::BigDecimal(big.clone())
+            }
+            _=> {
+                Serializable::Null
+            }
+        }
+    }
 }
 
 impl PartialEq for Serializable {

@@ -3,6 +3,12 @@ use std::str::{*};
 use msc::{*};
 use capability::{*};
 
+pub mod server;
+
+pub mod client;
+
+pub mod types;
+
 pub mod msc {
     pub const DEFAULT_PROTOCOL_VERSION: u8 = 0x0a;
     pub const NULL_TERMINATED_STRING_DELIMITER: u8 = 0x00;
@@ -185,13 +191,8 @@ pub trait Packet<'a> {
     fn to_bytes(&mut self) -> Box<[u8]>;
 }
 
-pub mod server;
 
-pub mod client;
 
-pub mod event;
-
-pub mod decoder;
 /**
  * <pre>
  * Offset  Length     Description

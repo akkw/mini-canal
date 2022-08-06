@@ -1,11 +1,20 @@
 use std::mem;
-use std::str::FromStr;
+use std::str::{from_boxed_utf8_unchecked, FromStr};
 use bigdecimal::BigDecimal;
 use bit_set::BitSet;
+use chrono::format::Numeric::Timestamp;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use encoding::{DecoderTrap, Encoding};
 use encoding::all::ISO_8859_1;
+use substring::Substring;
 // use encoding::DecoderTrap::Strict;
 use crate::channel::TcpSocketChannel;
+use crate::command::types::Types;
+use crate::log::event::{Event, LogEvent, Serializable};
+use crate::protocol::mini_canal_entry::Type;
+use crate::protocol::mini_canal_packet::Dump_oneof_timestamp_present::timestamp;
+use crate::StringResult;
+use crate::utils::time::timestamp_to_time;
 
 const NULL_LENGTH: i64 = -1;
 const DIG_PER_DEC1: i32 = 9;
@@ -1160,7 +1169,7 @@ impl LogBuffer {
         return self.get_fix_string_len_coding(len);
     }
 
-    pub fn get_fix_string_pos_len_coding(&mut self, pos: usize, len: usize, ) -> Option<String> {
+    pub fn get_fix_string_pos_len_coding(&mut self, pos: usize, len: usize) -> Option<String> {
         if self.check_pos_gre(pos, len) {
             let from = self.origin + pos;
             let end = from + len;
@@ -1461,7 +1470,7 @@ impl LogBuffer {
     }
 
 
-    pub fn fill_bit_map_pos_map(&self, bit_map: &mut bit_set::BitSet, pos: usize, len: usize) -> Result<(), String> {
+    pub fn fill_bit_map_pos_map(&self, bit_map: &mut BitSet, pos: usize, len: usize) -> Result<(), String> {
         if pos + ((len + 7) / 8) < self.limit {
             return Result::Err(format!("limit excceed: {}", (pos + (len + 7) / 8)));
         }
@@ -1469,20 +1478,20 @@ impl LogBuffer {
         Result::Ok(())
     }
 
-    pub fn fill_bitmap_map(&mut self, bit_map: &mut bit_set::BitSet, len: usize) -> Result<(), String> {
+    pub fn fill_bitmap_map(&mut self, bit_map: &mut BitSet, len: usize) -> Result<(), String> {
         if self.position + ((len + 7) / 8) > self.origin + self.limit {
             return Result::Err(format!("limit excceed: {}", (self.position + (len + 7) / 8 - self.origin)));
         }
         self.position = self.fill_bit_map0_pos(bit_map, self.position, len);
         Result::Ok(())
     }
-    fn fill_bit_map0_pos(&self, bit_map: &mut bit_set::BitSet, mut pos: usize, len: usize) -> usize {
+    fn fill_bit_map0_pos(&self, bit_map: &mut BitSet, mut pos: usize, len: usize) -> usize {
         let buf = self.buffer.clone();
         let mut bit = 0;
 
         while bit < len {
             let flag = ((buf[pos]) as i32) & 0xff;
-            pos+=1;
+            pos += 1;
             if flag == 0 {
                 bit += 8;
                 continue;
@@ -1542,7 +1551,7 @@ impl LogBuffer {
         if self.position + len > self.limit + self.origin {
             return Result::Err(format!("limit excceed: {}", (self.position + len - self.origin)));
         }
-        for i in self.position.. self.position + len {
+        for i in self.position..self.position + len {
             dest.push(self.buffer[i]);
         }
         self.position += len;
@@ -1736,9 +1745,8 @@ impl<'a> DirectLogFetcher<'a> {
         Result::Ok(true)
     }
     fn fetch0(&mut self, off: usize, len: usize) -> bool {
-
         if self.log_buffer.buffer.len() < off + len {
-            for i in 0.. len + off -  self.log_buffer.buffer.len(){
+            for i in 0..len + off - self.log_buffer.buffer.len() {
                 self.log_buffer.buffer.push(0)
             }
         }
@@ -1764,6 +1772,873 @@ fn copy_of_range(buffer: &Vec<u8>, from: usize, to: usize) -> Vec<u8> {
         bytes.push(buffer[i])
     }
     bytes
+}
+
+struct RowsLogBuffer {
+    buffer: LogBuffer,
+    column_len: usize,
+    json_column_count: i32,
+    charset_name: String,
+    null_bits: BitSet,
+    null_bit_index: usize,
+    partial: bool,
+    partial_bits: BitSet,
+    f_null: bool,
+    java_type: i32,
+    length: i32,
+    value: Serializable,
+}
+
+
+impl RowsLogBuffer {
+    const DATETIMEF_INT_OFS: i64 = 0x8000000000;
+    const TIMEF_INT_OFS: u64 = 0x800000;
+    const TIMEF_OFS: u64 = 0x800000000000;
+    const DIGITS: [char; 10] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+
+    pub fn from(log_buf: LogBuffer, column_len: usize, json_column_count: i32, charset_name: String, partial: bool) -> Self {
+        Self {
+            buffer: log_buf,
+            column_len,
+            json_column_count,
+            charset_name,
+            null_bits: BitSet::default(),
+            null_bit_index: 0,
+            partial,
+            partial_bits: BitSet::default(),
+            f_null: false,
+            java_type: 0,
+            length: 0,
+            value: Serializable::Null,
+        }
+    }
+
+    pub fn next_one_row(&mut self, columns: BitSet) -> bool {
+        self.next_one_row_after(columns, false)
+    }
+
+    pub fn next_one_row_after(&mut self, columns: BitSet, after: bool) -> bool {
+        let has_one_row = self.buffer.has_remaining();
+
+        if has_one_row {
+            let mut column = 0;
+
+            for i in 0..self.column_len {
+                if columns.contains(i) {
+                    column += 1;
+                }
+            }
+
+            if after && self.partial {
+                self.partial_bits.clear();
+                let value_options = self.buffer.get_packed_i64();
+                let partial_json_updates = 1;
+                if (value_options & partial_json_updates) != 0 {
+                    self.partial_bits.insert(1);
+                    self.buffer.forward(((self.json_column_count + 7) / 8) as usize);
+                }
+            }
+
+            self.null_bit_index = 0;
+            self.null_bits.clear();
+            self.buffer.fill_bitmap_map(&mut self.null_bits, column);
+        }
+        has_one_row
+    }
+
+    pub fn next_value(&mut self, colum_name: String, column_index: usize, kind: i32, meta: i32) -> Serializable {
+        self.next_value_is_binary(colum_name, column_index, kind, meta, false)
+    }
+
+    pub fn next_value_is_binary(&mut self, colum_name: String, column_index: usize, kind: i32, meta: i32, is_binary: bool) -> Serializable {
+        self.f_null = self.null_bits.contains(self.null_bit_index);
+        self.null_bit_index += 1;
+
+        return if self.f_null {
+            self.value = Serializable::Null;
+            self.java_type = Self::mysql_to_java_type(kind, meta, is_binary);
+            self.length = 0;
+            Serializable::Null
+        } else {
+            self.fetch_value(colum_name, column_index, kind, meta, is_binary).unwrap()
+        };
+    }
+
+    fn mysql_to_java_type(mut kind: i32, meta: i32, is_binary: bool) -> i32 {
+        let java_type;
+
+        if kind == Event::MYSQL_TYPE_STRING {
+            if meta >= 256 {
+                let byte0 = meta >> 8;
+                if byte0 & 0x30 != 0x30 {
+                    kind = byte0 | 0x30;
+                } else {
+                    match byte0 {
+                        Event::MYSQL_TYPE_SET |
+                        Event::MYSQL_TYPE_ENUM |
+                        Event::MYSQL_TYPE_STRING => {
+                            kind = byte0;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        match kind {
+            Event::MYSQL_TYPE_LONG => {
+                java_type = Types::INTEGER;
+            }
+            Event::MYSQL_TYPE_TINY => {
+                java_type = Types::TINYINT;
+            }
+            Event::MYSQL_TYPE_SHORT => {
+                java_type = Types::SMALLINT;
+            }
+            Event::MYSQL_TYPE_INT24 => {
+                java_type = Types::INTEGER;
+            }
+            Event::MYSQL_TYPE_LONGLONG => {
+                java_type = Types::BIGINT;
+            }
+            Event::MYSQL_TYPE_DECIMAL => {
+                java_type = Types::DECIMAL;
+            }
+            Event::MYSQL_TYPE_NEWDECIMAL => {
+                java_type = Types::DECIMAL;
+            }
+            Event::MYSQL_TYPE_FLOAT => {
+                java_type = Types::REAL;
+            }
+            Event::MYSQL_TYPE_DOUBLE => {
+                java_type = Types::DOUBLE;
+            }
+            Event::MYSQL_TYPE_BIT => {
+                java_type = Types::BIT;
+            }
+            Event::MYSQL_TYPE_TIMESTAMP |
+            Event::MYSQL_TYPE_DATETIME |
+            Event::MYSQL_TYPE_TIMESTAMP2 |
+            Event::MYSQL_TYPE_DATETIME2 => {
+                java_type = Types::TIMESTAMP;
+            }
+            Event::MYSQL_TYPE_TIME |
+            Event::MYSQL_TYPE_TIME2 => {
+                java_type = Types::TIME;
+            }
+            Event::MYSQL_TYPE_NEWDATE |
+            Event::MYSQL_TYPE_DATE => {
+                java_type = Types::DATE;
+            }
+            Event::MYSQL_TYPE_YEAR => {
+                java_type = Types::VARCHAR;
+            }
+            Event::MYSQL_TYPE_ENUM => {
+                java_type = Types::INTEGER;
+            }
+            Event::MYSQL_TYPE_SET => {
+                java_type = Types::BINARY;
+            }
+            Event::MYSQL_TYPE_TINY_BLOB |
+            Event::MYSQL_TYPE_MEDIUM_BLOB |
+            Event::MYSQL_TYPE_LONG_BLOB |
+            Event::MYSQL_TYPE_BLOB => {
+                if meta == 1 {
+                    java_type = Types::VARBINARY;
+                } else {
+                    java_type = Types::LONGVARBINARY;
+                }
+            }
+            Event::MYSQL_TYPE_VARCHAR |
+            Event::MYSQL_TYPE_VAR_STRING => {
+                if is_binary {
+                    java_type = Types::VARBINARY;
+                } else {
+                    java_type = Types::VARCHAR;
+                }
+            }
+            Event::MYSQL_TYPE_STRING => {
+                if is_binary {
+                    java_type = Types::BINARY;
+                } else {
+                    java_type = Types::CHAR;
+                }
+            }
+            Event::MYSQL_TYPE_GEOMETRY => {
+                java_type = Types::BINARY;
+            }
+
+            _ => {
+                java_type = Types::OTHER;
+            }
+        }
+        java_type
+    }
+
+    fn fetch_value(&mut self, colum_name: String, column_index: usize, mut kind: i32, meta: i32, is_binary: bool) -> StringResult<Serializable> {
+        let mut len = 0;
+        if kind == Event::MYSQL_TYPE_STRING as i32 {
+            if meta >= 256 {
+                let byte0 = (meta >> 8);
+                let byte1 = (meta & 0xff);
+                if byte0 & 0x30 != 0x30 {
+                    len = byte1 | ((byte0 & 0x30) ^ 0x30 << 4);
+                    kind = byte0 | 0x30;
+                } else {
+                    match byte0 {
+                        Event::MYSQL_TYPE_SET |
+                        Event::MYSQL_TYPE_ENUM |
+                        Event::MYSQL_TYPE_STRING => {
+                            kind = byte0;
+                            len = byte1;
+                        }
+                        _ => {
+                            return Result::Err(format!("!! Don't know how to handle column type={} meta={} ({})", kind, meta, meta));
+                        }
+                    }
+                }
+            } else {
+                len = meta;
+            }
+        }
+
+        match kind {
+            Event::MYSQL_TYPE_LONG => {
+                self.value = Serializable::I32(self.buffer.get_int32().unwrap());
+                self.java_type = Types::INTEGER;
+                self.length = 4;
+            }
+            Event::MYSQL_TYPE_TINY => {
+                self.value = Serializable::I8(self.buffer.get_int8().unwrap());
+                self.java_type = Types::TINYINT;
+                self.length = 1;
+            }
+            Event::MYSQL_TYPE_SHORT => {
+                // XXX: How to check signed / unsigned?
+                // self.value = Integer.self.valueOf(unsigned ? buffer.getUint16() :
+                // buffer.getInt16());
+                self.value = Serializable::I16(self.buffer.get_int16().unwrap());
+                self.java_type = Types::SMALLINT; // java.sql.Types.INTEGER;
+                self.length = 2;
+            }
+            Event::MYSQL_TYPE_INT24 => {
+                // XXX: How to check signed / unsigned?
+                // self.value = Integer.self.valueOf(unsigned ? buffer.getUint24() :
+                // buffer.getInt24());
+                self.value = Serializable::I32(self.buffer.get_int24().unwrap());
+                self.java_type = Types::INTEGER;
+                self.length = 3;
+            }
+            Event::MYSQL_TYPE_LONGLONG => {
+                // XXX: How to check signed / unsigned?
+                // self.value = unsigned ? buffer.getUlong64()) :
+                // Long.self.valueOf(buffer.getLong64());
+                self.value = Serializable::I64(self.buffer.get_int64().unwrap());
+                self.java_type = Types::BIGINT; // Types.INTEGER;
+                self.length = 8;
+            }
+            Event::MYSQL_TYPE_DECIMAL => {
+                println!("MYSQL_TYPE_DECIMAL : This enumeration value is only used internally and cannot exist in a binlog!");
+                self.java_type = Types::DECIMAL;
+                self.value = Serializable::Null;
+                self.length = 0;
+            }
+            Event::MYSQL_TYPE_NEWDECIMAL => {
+                let precision = meta >> 8;
+                let decimals = (meta & 0xff) as usize;
+                self.buffer.get_decimal(precision as usize, decimals);
+                self.java_type = Types::DECIMAL;
+                self.length = precision as i32;
+            }
+            Event::MYSQL_TYPE_FLOAT => {
+                self.value = Serializable::I32(self.buffer.get_int32().unwrap());
+                self.java_type = Types::REAL;
+                self.length = 4;
+            }
+            Event::MYSQL_TYPE_DOUBLE => {
+                self.value = Serializable::F64(self.buffer.get_double64());
+                self.java_type = Types::DOUBLE;
+                self.length = 8;
+            }
+            Event::MYSQL_TYPE_BIT => {
+                let nbits = ((meta >> 8) * 8) + (meta & 0xff);
+                len = (nbits + 7) / 8;
+                if nbits > 1 {
+                    match len {
+                        1 => {
+                            self.value = Serializable::U8(self.buffer.get_uint8().unwrap());
+                        }
+                        2 => {
+                            self.value = Serializable::U16(self.buffer.get_uint16().unwrap());
+                        }
+                        3 => {
+                            self.value = Serializable::U32(self.buffer.get_uint24().unwrap());
+                        }
+                        4 => {
+                            self.value = Serializable::U32(self.buffer.get_uint32().unwrap());
+                        }
+                        5 => {
+                            self.value = Serializable::U64(self.buffer.get_uint40().unwrap());
+                        }
+                        6 => {
+                            self.value = Serializable::U64(self.buffer.get_uint48().unwrap());
+                        }
+                        7 => {
+                            self.value = Serializable::U64(self.buffer.get_uint56().unwrap());
+                        }
+                        8 => {
+                            self.value = Serializable::U64(self.buffer.get_uint64().unwrap());
+                        }
+                        _ => {
+                            return Result::Err(format!("!! Unknown Bit len: {}", len));
+                        }
+                    }
+                } else {
+                    let bit = self.buffer.get_int8().unwrap();
+                    self.value = Serializable::I8(bit);
+                }
+                self.java_type = Types::BIT;
+                self.length = nbits;
+            }
+            Event::MYSQL_TYPE_TIMESTAMP => {
+                // MYSQL DataTypes: TIMESTAMP
+                // range is '1970-01-01 00:00:01' UTC to '2038-01-19 03:14:07'
+                // UTC
+                // A TIMESTAMP cannot represent the value '1970-01-01 00:00:00'
+                // because that is equivalent to 0 seconds from the epoch and
+                // the value 0 is reserved for representing '0000-00-00
+                // 00:00:00', the “zero” TIMESTAMP value.
+                let i32 = self.buffer.get_uint32().unwrap();
+                if i32 == 0 {
+                    self.value = Serializable::String(String::from("0000-00-00 00:00:00"))
+                } else {
+                    self.value = Serializable::String(timestamp_to_time(i32 as u64));
+                }
+                self.java_type = Types::TIMESTAMP;
+                self.length = 64;
+            }
+            Event::MYSQL_TYPE_TIMESTAMP2 => {
+                let tv_sec = self.buffer.get_uint32_big_endian().unwrap();
+                let mut tv_usec = 0;
+                match meta {
+                    0 => {
+                        tv_usec = 0;
+                    }
+                    1 | 2 => {
+                        tv_usec = (self.buffer.get_int8().unwrap() as i32 * 1000);
+                    }
+                    3 | 4 => {
+                        tv_usec = (self.buffer.get_int16_big_endian().unwrap() as i32 * 100);
+                    }
+                    5 | 6 => {
+                        tv_usec = self.buffer.get_int24_big_endian().unwrap();
+                    }
+                    _ => {
+                        tv_usec = 0;
+                    }
+                }
+
+                let second;
+                if tv_sec == 0 {
+                    second = Serializable::String(String::from("0000-00-00 00:00:00"));
+                } else {
+                    second = Serializable::String(timestamp_to_time(tv_usec as u64));
+                }
+
+                if meta >= 1 {
+                    let mut micro_second = Self::useconds_to_str(tv_usec, meta).unwrap();
+                    micro_second = micro_second.substring(0, meta as usize).to_string();
+                    self.value = Serializable::String(String::from(format!("{}.{}", second, micro_second)));
+                } else {
+                    self.value = second;
+                }
+                self.java_type = Types::TIMESTAMP;
+                self.length = 4 + (meta + 1) / 2;
+            }
+            Event::MYSQL_TYPE_DATETIME => {
+                let i64 = self.buffer.get_int64().unwrap();
+                if i64 == 0 {
+                    self.value = Serializable::String(String::from("0000-00-00 00:00:00"));
+                } else {
+                    let d = i64 / 1000000;
+                    let t = i64 % 1000000;
+                    let mut builder = String::new();
+
+                    Self::append_number4(&mut builder, d / 10000);
+                    builder.push('-');
+                    Self::append_number2(&mut builder, (d % 10000) / 100);
+                    builder.push('-');
+                    Self::append_number2(&mut builder, d % 100);
+                    builder.push(' ');
+                    Self::append_number2(&mut builder, t / 10000);
+                    builder.push(':');
+                    Self::append_number2(&mut builder, (t % 10000) / 100);
+                    builder.push(':');
+                    Self::append_number2(&mut builder, t % 100);
+                    self.value = Serializable::String(builder.to_string());
+                }
+                self.java_type = Types::TIMESTAMP;
+                self.length = 8;
+            }
+            Event::MYSQL_TYPE_DATETIME2 => {
+                let intpart = self.buffer.get_int40_big_endian().unwrap() - Self::DATETIMEF_INT_OFS;
+                let mut frac = 0;
+                match meta {
+                    0 => {
+                        frac = 0;
+                    }
+                    1 | 2 => {
+                        frac = self.buffer.get_int8().unwrap() as i32 * 10000;
+                    }
+                    3 | 4 => {
+                        frac = self.buffer.get_int16_big_endian().unwrap() as i32 * 100;
+                    }
+                    5 | 6 => {
+                        frac = self.buffer.get_int24_big_endian().unwrap();
+                    }
+                    _ => frac = 0
+                }
+
+                let second;
+                if intpart == 0 {
+                    second = String::from("0000-00-00 00:00:00");
+                } else {
+                    let ymd = intpart >> 17;
+                    let ym = ymd >> 5;
+                    let hms = intpart % (1 << 17);
+                    let mut builder = String::new();
+
+                    Self::append_number4(&mut builder, ym / 13);
+                    builder.push('-');
+                    Self::append_number2(&mut builder, ym % 13);
+                    builder.push('-');
+                    Self::append_number2(&mut builder, (ymd % (1 << 5)));
+                    builder.push(' ');
+                    Self::append_number2(&mut builder, (hms >> 12));
+                    builder.push(':');
+                    Self::append_number2(&mut builder, ((hms >> 6) % (1 << 6)));
+                    builder.push(':');
+                    Self::append_number2(&mut builder, (hms % (1 << 6)));
+                    second = builder.to_string();
+                }
+
+                if meta >= 1 {
+                    let mut micro_second = Self::useconds_to_str(frac, meta).unwrap();
+                    micro_second = micro_second.substring(0, meta as usize).to_string();
+                    self.value = Serializable::String(format!("{}.{}", second, micro_second));
+                } else {
+                    self.value = Serializable::String(String::from(second));
+                }
+
+                self.java_type = Types::TIMESTAMP;
+                self.length = 5 + (meta + 1) / 2;
+            }
+            Event::MYSQL_TYPE_TIME => {
+                let i32 = self.buffer.get_int24().unwrap();
+                let u32 = if i32 < 0 { -i32 } else { i32 };
+
+                if i32 == 0 {
+                    self.value = Serializable::String(String::from("00:00:00"));
+                } else {
+                    let mut builder = String::new();
+
+                    if i32 < 0 {
+                        builder.push('-');
+                    }
+
+                    let d = u32 / 10000;
+                    if d > 100 {
+                        builder.push_str(d.to_string().as_str());
+                    } else {
+                        Self::append_number2(&mut builder, d as i64);
+                    }
+                    builder.push(':');
+                    Self::append_number2(&mut builder, (u32 as i64 % 10000) / 100);
+                    builder.push(':');
+                    Self::append_number2(&mut builder, u32 as i64 % 100);
+                    self.value = Serializable::String(builder.to_string());
+                }
+                self.java_type = Types::TIME;
+                self.length = 3;
+            }
+            Event::MYSQL_TYPE_TIME2 => {
+                let mut intpart = 0;
+                let mut frac = 0;
+                let mut ltime = 0;
+                match meta {
+                    0 => {
+                        intpart = self.buffer.get_uint24_big_endian().unwrap() as u64 - Self::TIMEF_INT_OFS;
+                        ltime = intpart << 24;
+                    }
+                    1 | 2 => {
+                        intpart = self.buffer.get_uint24_big_endian().unwrap() as u64 - Self::TIMEF_INT_OFS;
+                        frac = self.buffer.get_uint8().unwrap() as u64;
+
+                        if intpart < 0 && frac > 0 {
+                            /*
+                             * Negative values are stored with reverse
+                             * fractional part order, for binary sort
+                             * compatibility. Disk value intpart frac Time value
+                             * Memory value 800000.00 0 0 00:00:00.00
+                             * 0000000000.000000 7FFFFF.FF -1 255 -00:00:00.01
+                             * FFFFFFFFFF.FFD8F0 7FFFFF.9D -1 99 -00:00:00.99
+                             * FFFFFFFFFF.F0E4D0 7FFFFF.00 -1 0 -00:00:01.00
+                             * FFFFFFFFFF.000000 7FFFFE.FF -1 255 -00:00:01.01
+                             * FFFFFFFFFE.FFD8F0 7FFFFE.F6 -2 246 -00:00:01.10
+                             * FFFFFFFFFE.FE7960 Formula to convert fractional
+                             * part from disk format (now stored in "frac"
+                             * variable) to absolute value: "0x100 - frac". To
+                             * reconstruct in-memory value, we shift to the next
+                             * integer value and then substruct fractional part.
+                             */
+
+                            intpart += 1;
+                            frac -= 0x100;
+                        }
+                        frac = frac * 10000;
+                        ltime = intpart << 24;
+                    }
+                    3 | 4 => {
+                        intpart = self.buffer.get_uint24_big_endian().unwrap() as u64 - Self::TIMEF_INT_OFS;
+                        frac = self.buffer.get_uint16_big_endian().unwrap() as u64;
+                        ltime = intpart << 24;
+                    }
+                    5 | 6 => {
+                        intpart = self.buffer.get_uint48_big_endian().unwrap() - Self::TIMEF_OFS;
+                        ltime = intpart;
+                        frac = (intpart % (1 << 24));
+                    }
+                    _ => {
+                        intpart = self.buffer.get_uint24_big_endian().unwrap() as u64 - Self::TIMEF_INT_OFS;
+                        ltime = intpart << 24;
+                    }
+                }
+                let second;
+                if intpart == 0 {
+                    second = if frac < 0 { String::from("-00:00:00") } else { String::from("00:00:00") }
+                } else {
+                    let ultime = ltime;
+                    intpart = ultime >> 24;
+
+                    let mut builder = String::new();
+                    if ltime < 0 {
+                        builder.push('-');
+                    }
+
+                    let d = ((intpart >> 12) % (1 << 10));
+                    if d >= 100 {
+                        builder.push_str(d.to_string().as_str());
+                    } else {
+                        Self::append_number2(&mut builder, d as i64);
+                    }
+                    builder.push(':');
+                    Self::append_number2(&mut builder, ((intpart as i64 >> 6) % (1 << 6)));
+                    builder.push(':');
+                    Self::append_number2(&mut builder, (intpart as i64 % (1 << 6)));
+                    second = builder;
+                }
+
+                if meta > 1 {
+                    // let frac = if frac < 0 { -frac } else { frac };
+                    let mut micro_second = Self::useconds_to_str(frac as i32, meta).unwrap();
+                    micro_second = micro_second.substring(0, meta as usize).to_string();
+                    self.value = Serializable::String(String::from(format!("{}.{}", second, micro_second)));
+                } else {
+                    self.value = Serializable::String(second);
+                }
+
+                self.java_type = Types::TIME;
+                self.length = 3 + (meta + 1) / 2;
+            }
+            Event::MYSQL_TYPE_NEWDATE => {
+                println!("MYSQL_TYPE_NEWDATE : This enumeration value is only used internally and cannot exist in a binlog!");
+                self.java_type = Types::DATE;
+                self.value = Serializable::Null;
+                self.length = 0;
+            }
+            Event::MYSQL_TYPE_DATE => {
+                let i32 = self.buffer.get_uint24().unwrap() as i64;
+                if i32 == 0 {
+                    self.value = Serializable::String(String::from("0000-00-00"));
+                } else {
+                    let mut builder = String::new();
+                    Self::append_number4(&mut builder, i32 / (16 * 32));
+                    builder.push('-');
+                    Self::append_number2(&mut builder, i32 / 32 % 16);
+                    builder.push('-');
+                    Self::append_number2(&mut builder, i32 % 32);
+                    self.value = Serializable::String(builder.to_string());
+                }
+                self.java_type = Types::DATE;
+                self.length = 3;
+            }
+            Event::MYSQL_TYPE_YEAR => {
+                let i32 = self.buffer.get_uint8().unwrap() as i32;
+                if i32 == 0 {
+                    self.value = Serializable::String(String::from("0000"));
+                } else {
+                    self.value = Serializable::String((i32 + 1900).to_string());
+                }
+                self.java_type = Types::VARCHAR;
+                self.length = 1;
+            }
+            Event::MYSQL_TYPE_ENUM => {
+                let int32;
+                match len {
+                    1 => {
+                        int32 = self.buffer.get_uint8().unwrap() as u16;
+                    }
+                    2 => {
+                        int32 = self.buffer.get_uint16().unwrap();
+                    }
+                    _ => {
+                        int32 = 0;
+                        println!("!! Unknown ENUM pack len: {}", len)
+                    }
+                }
+                self.value = Serializable::String(int32.to_string());
+                self.java_type = Types::INTEGER;
+                self.length = len;
+            }
+            Event::MYSQL_TYPE_SET => {
+                let nbits = (meta & 0xFF) * 8;
+                len = (nbits + 7) / 8;
+                if nbits > 1 {
+                    match len {
+                        1 => {
+                            self.value = Serializable::U8(self.buffer.get_uint8().unwrap());
+                        }
+                        2 => {
+                            self.value = Serializable::U16(self.buffer.get_uint16().unwrap());
+                        }
+                        3 => {
+                            self.value = Serializable::U32(self.buffer.get_uint24().unwrap());
+                        }
+                        4 => {
+                            self.value = Serializable::U32(self.buffer.get_uint32().unwrap());
+                        }
+                        5 => {
+                            self.value = Serializable::U64(self.buffer.get_uint40().unwrap());
+                        }
+                        6 => {
+                            self.value = Serializable::U64(self.buffer.get_uint48().unwrap());
+                        }
+                        7 => {
+                            self.value = Serializable::U64(self.buffer.get_uint56().unwrap());
+                        }
+                        8 => {
+                            self.value = Serializable::U64(self.buffer.get_uint64().unwrap());
+                        }
+                        _ => {
+                            println!("!! Unknown Set len: {}", len);
+                        }
+                    }
+                } else {
+                    let bit = self.buffer.get_int8().unwrap();
+                    self.value = Serializable::I8(bit);
+                }
+                self.java_type = Types::BIT;
+                self.length = len;
+            }
+            Event::MYSQL_TYPE_TINY_BLOB => {
+                println!("MYSQL_TYPE_TINY_BLOB : This enumeration value is only used internally and cannot exist in a binlog!")
+            }
+            Event::MYSQL_TYPE_MEDIUM_BLOB => {
+                println!("MYSQL_TYPE_MEDIUM_BLOB : This enumeration value is only used internally and cannot exist in a binlog!")
+            }
+            Event::MYSQL_TYPE_LONG_BLOB => {
+                println!("MYSQL_TYPE_LONG_BLOB : This enumeration value is only used internally and cannot exist in a binlog!")
+            }
+            Event::MYSQL_TYPE_BLOB => {
+                match meta {
+                    1 => {
+                        let len8 = self.buffer.get_uint8().unwrap() as usize;
+                        let mut binary = vec![];
+                        self.buffer.fill_out_bytes(&mut binary, 0, len8);
+                        self.value = Serializable::BYTES(binary);
+                        self.java_type = Types::VARBINARY;
+                        self.length = len8 as i32;
+                    }
+                    2 => {
+                        let len16 = self.buffer.get_uint16().unwrap() as usize;
+                        let mut binary = vec![];
+                        self.buffer.fill_out_bytes(&mut binary, 0, len16);
+                        self.value = Serializable::BYTES(binary);
+                        self.java_type = Types::VARBINARY;
+                        self.length = len16 as i32;
+                    }
+                    3 => {
+                        let len24 = self.buffer.get_uint16().unwrap() as usize;
+                        let mut binary = vec![];
+                        self.buffer.fill_out_bytes(&mut binary, 0, len24);
+                        self.value = Serializable::BYTES(binary);
+                        self.java_type = Types::VARBINARY;
+                        self.length = len24 as i32;
+                    }
+                    4 => {
+                        let len32 = self.buffer.get_uint16().unwrap() as usize;
+                        let mut binary = vec![];
+                        self.buffer.fill_out_bytes(&mut binary, 0, len32);
+                        self.value = Serializable::BYTES(binary);
+                        self.java_type = Types::VARBINARY;
+                        self.length = len32 as i32;
+                    }
+                    _ => {
+                        println!("!! Unknown BLOB packlen: {}", meta);
+                    }
+                }
+            }
+            Event::MYSQL_TYPE_VARCHAR |
+            Event::MYSQL_TYPE_VAR_STRING => {
+                len = meta;
+                if len < 256 {
+                    len = self.buffer.get_uint8().unwrap() as i32;
+                } else {
+                    len = self.buffer.get_uint16().unwrap() as i32;
+                }
+
+                if is_binary {
+                    let mut binary = vec![];
+                    self.buffer.fill_out_bytes(&mut binary, 0, len as usize);
+                    self.java_type = Types::VARBINARY;
+                    self.value = Serializable::BYTES(binary);
+                } else {
+                    self.value = Serializable::String(self.buffer.get_full_string_len(len as usize).unwrap());
+                    self.java_type = Types::VARCHAR;
+                }
+                self.length = len;
+            }
+            Event::MYSQL_TYPE_STRING => {
+                if len < 256 {
+                    len = self.buffer.get_uint8().unwrap() as i32;
+                } else {
+                    len = self.buffer.get_uint16().unwrap() as i32;
+                }
+
+                if is_binary {
+                    let mut binary = vec![];
+                    self.buffer.fill_out_bytes(&mut binary, 0, len as usize);
+                    self.java_type = Types::BINARY;
+                    self.value = Serializable::BYTES(binary);
+                } else {
+                    self.value = Serializable::String(self.buffer.get_full_string_len(len as usize).unwrap());
+                    self.java_type = Types::CHAR;
+                }
+                self.length = len;
+            }
+            Event::MYSQL_TYPE_JSON => {
+                match meta {
+                    1 => {
+                        len = self.buffer.get_uint8().unwrap() as i32;
+                    }
+                    2 => {
+                        len = self.buffer.get_uint16().unwrap() as i32;
+                    }
+                    3 => {
+                        len = self.buffer.get_uint24().unwrap() as i32;
+                    }
+                    4 => {
+                        len = self.buffer.get_uint32().unwrap() as i32;
+                    }
+                    _ => {
+                        println!("!! Unknown JSON packlen: {}", meta)
+                    }
+                }
+                if self.partial_bits.contains(1) {
+                    let position = self.buffer.position();
+                    // TODO
+                    todo!()
+                }
+            }
+            Event::MYSQL_TYPE_GEOMETRY => {
+                match meta {
+                    1 => {
+                        len = self.buffer.get_uint8().unwrap() as i32;
+                    }
+                    2 => {
+                        len = self.buffer.get_int16().unwrap() as i32;
+                    }
+                    3 => {
+                        len = self.buffer.get_uint24().unwrap() as i32;
+                    }
+                    4 => {
+                        len = self.buffer.get_uint32().unwrap() as i32;
+                    }
+                    _ => {
+                        return Result::Err(String::from(format!("!! Unknown MYSQL_TYPE_GEOMETRY packlen: {}", meta)));
+                    }
+                }
+                let mut binary = vec![];
+                self.buffer.fill_out_bytes(&mut binary, 0, len as usize);
+                self.java_type = Types::BINARY;
+                self.value = Serializable::BYTES(binary);
+                self.length = len;
+            }
+            Event::MYSQL_TYPE_BOOL |
+            Event::MYSQL_TYPE_INVALID |
+            _ => {
+                String::from(format!("!! Don't know how to handle column type: {} meta: {} ({})", kind, meta, meta));
+                self.java_type = Types::OTHER;
+                self.value = Serializable::Null;
+                self.length = 0;
+
+            }
+        }
+        Result::Ok(self.value.clone())
+    }
+
+    fn append_number4(builder: &mut String, d: i64) {
+        if d >= 1000 {
+            builder.push(Self::DIGITS[d as usize / 1000]);
+            builder.push(Self::DIGITS[(d as usize / 1000) % 10]);
+            builder.push(Self::DIGITS[(d as usize / 10) % 10]);
+            builder.push(Self::DIGITS[d as usize % 10]);
+        } else {
+            builder.push('0');
+            Self::append_number3(builder, d);
+        }
+    }
+
+    fn append_number3(builder: &mut String, d: i64) {
+        if d >= 100 {
+            builder.push(Self::DIGITS[d as usize / 100]);
+            builder.push(Self::DIGITS[(d as usize / 10) % 10]);
+            builder.push(Self::DIGITS[d as usize % 10]);
+        } else {
+            builder.push('0');
+            Self::append_number2(builder, d);
+        }
+    }
+
+    fn append_number2(builder: &mut String, d: i64) {
+        if d >= 10 {
+            builder.push(Self::DIGITS[(d as usize / 10) % 10]);
+            builder.push(Self::DIGITS[d as usize % 10]);
+        } else {
+            builder.push('0');
+            builder.push(Self::DIGITS[d as usize])
+        }
+    }
+    fn useconds_to_str(frac: i32, meta: i32) -> StringResult<String> {
+        let mut sec = frac.to_string();
+        if meta > 6 {
+            return Result::Err(format!("unknow useconds meta : {}", meta));
+        }
+
+        if sec.len() < 6 {
+            let mut result = String::new();
+            let mut len = 6 - sec.len();
+            while len > 0 {
+                result.push('0');
+                len -= 1;
+            }
+            result.push_str(sec.as_str());
+            sec = result.to_string();
+        }
+
+        Result::Ok(sec.substring(0, meta as usize).to_string())
+    }
 }
 
 

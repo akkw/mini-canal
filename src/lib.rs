@@ -7,3 +7,4 @@ pub mod protocol;
 pub mod log;
 
 
+type StringResult<T> = Result<T, String>;

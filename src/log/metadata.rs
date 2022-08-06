@@ -1,3 +1,7 @@
+use std::fmt::{Display, Formatter};
+use protobuf::reflect::ProtobufValue;
+use crate::StringResult;
+
 pub struct EntryPosition {
     timestamp: Option<u64>,
     eventidentity_segment: Option<i32>,
@@ -20,10 +24,11 @@ impl Clone for EntryPosition {
             journal_name: self.journal_name.clone(),
             position: self.position,
             server_id: self.server_id,
-            gtid: self.gtid.clone()
+            gtid: self.gtid.clone(),
         }
     }
 }
+
 impl EntryPosition {
     pub fn new() -> Self {
         Self {
@@ -142,3 +147,139 @@ impl EntryPosition {
         self.gtid = gtid;
     }
 }
+
+pub struct TableMeta {
+    schema: Option<String>,
+    table: Option<String>,
+    fields: Vec<FieldMeta>,
+    ddl: Option<String>,
+}
+
+impl TableMeta {
+    pub fn from(schema: Option<String>, table: Option<String>, fields: Vec<FieldMeta>) -> Self {
+        Self {
+            schema,
+            table,
+            fields,
+            ddl: Option::None,
+        }
+    }
+
+
+    pub fn new() -> Self {
+        Self {
+            schema: Option::None,
+            table: Option::None,
+            fields: Vec::new(),
+            ddl: Option::None,
+        }
+    }
+
+    pub fn get_field_meta_by_name(&mut self, name: &str) -> StringResult<&mut FieldMeta>{
+        for meta in self.fields.iter_mut() {
+            if  meta.column_name.as_ref().unwrap().to_lowercase().eq(name.to_lowercase().as_str()) {
+                return Result::Ok(meta);
+            }
+        }
+        Result::Err(format!("unknow column : {}", name))
+    }
+
+    pub fn get_primary_fields(&mut self) -> Vec<&mut FieldMeta> {
+        let mut primarys = Vec::new();
+        for meta in self.fields.iter_mut() {
+            if  meta.key() {
+                primarys.push(meta);
+            }
+        }
+        return primarys;
+    }
+
+    pub fn add_field_meta(&mut self, field_meta: FieldMeta) {
+        self.fields.push(field_meta);
+    }
+
+
+    pub fn schema(&self) -> &Option<String> {
+        &self.schema
+    }
+    pub fn table(&self) -> &Option<String> {
+        &self.table
+    }
+    pub fn fields(&self) -> &Vec<FieldMeta> {
+        &self.fields
+    }
+    pub fn ddl(&self) -> &Option<String> {
+        &self.ddl
+    }
+
+
+    pub fn set_schema(&mut self, schema: Option<String>) {
+        self.schema = schema;
+    }
+    pub fn set_table(&mut self, table: Option<String>) {
+        self.table = table;
+    }
+    pub fn set_fields(&mut self, fields: Vec<FieldMeta>) {
+        self.fields = fields;
+    }
+    pub fn set_ddl(&mut self, ddl: Option<String>) {
+        self.ddl = ddl;
+    }
+}
+
+
+pub struct FieldMeta {
+    column_name: Option<String>,
+    column_type: Option<String>,
+    nullable: bool,
+    key: bool,
+    default_value: Option<String>,
+}
+
+impl Display for FieldMeta {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "column_name: {}, column_type: {}, nullable: {},key: {}, default_value: {}",
+               self.column_name.as_ref().unwrap(), self.column_type.as_ref().unwrap(), self.nullable,
+               self.key, self.default_value.as_ref().unwrap())
+    }
+}
+
+impl FieldMeta {
+    pub fn from(column_name: Option<String>, column_type: Option<String>, nullable: bool, key: bool, default_value: Option<String>) -> Self {
+        Self { column_name, column_type, nullable, key, default_value }
+    }
+
+    pub fn column_name(&self) -> &Option<String> {
+        &self.column_name
+    }
+    pub fn column_type(&self) -> &Option<String> {
+        &self.column_type
+    }
+    pub fn nullable(&self) -> bool {
+        self.nullable
+    }
+    pub fn key(&self) -> bool {
+        self.key
+    }
+    pub fn default_value(&self) -> &Option<String> {
+        &self.default_value
+    }
+
+
+    pub fn set_column_name(&mut self, column_name: Option<String>) {
+        self.column_name = column_name;
+    }
+    pub fn set_column_type(&mut self, column_type: Option<String>) {
+        self.column_type = column_type;
+    }
+    pub fn set_nullable(&mut self, nullable: bool) {
+        self.nullable = nullable;
+    }
+    pub fn set_key(&mut self, key: bool) {
+        self.key = key;
+    }
+    pub fn set_default_value(&mut self, default_value: Option<String>) {
+        self.default_value = default_value;
+    }
+}
+
