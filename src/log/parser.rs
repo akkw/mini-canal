@@ -1,20 +1,26 @@
 use std::f32::consts::E;
 use std::string;
+use bit_set::BitSet;
 use charsets::Charset;
 use encoding::all::ISO_8859_1;
 use encoding::{DecoderTrap, Encoding};
 use protobuf::{Message, RepeatedField};
 use str_utils::{StartsWithIgnoreAsciiCase, StartsWithIgnoreCase};
 use substring::Substring;
+use crate::channel::mysql_socket::MysqlConnection;
+use crate::command::types::Types;
+use crate::instance::table_meta_cache::TableMetaCache;
 use crate::log::event::{*};
 use crate::log::event::LogEvent::UnknownLog;
+use crate::log::log_buffer::RowsLogBuffer;
 use crate::log::metadata::TableMeta;
-use crate::protocol::mini_canal_entry::{Entry, EntryType, EventType, Header, Pair, RowChange, TransactionBegin, TransactionEnd, Type};
+use crate::protocol::mini_canal_entry::{Column, Entry, EntryType, EventType, Header, Pair, RowChange, RowData, TransactionBegin, TransactionEnd, Type};
 use crate::protocol::mini_canal_entry::Header_oneof_eventType_present::eventType;
 use crate::StringResult;
 
 pub struct LogEventConvert {
     charset: Charset,
+    table_cache: Option<TableMetaCache>,
 }
 
 impl LogEventConvert {
@@ -37,11 +43,13 @@ impl LogEventConvert {
 
 
     pub fn new() -> Self {
-        Self { charset: Charset::Utf8 }
+        Self { charset: Charset::Utf8, table_cache: None }
     }
 
-
-    pub fn parse(log_event: &mut LogEvent, is_seek: bool) -> Option<Entry> {
+    pub fn from(table_cache: TableMetaCache) -> Self {
+        Self { charset: Charset::Utf8, table_cache: Option::Some(table_cache) }
+    }
+    pub fn parse(&mut self, log_event: &mut LogEvent, is_seek: bool) -> Option<Entry> {
         if let UnknownLog(u) = log_event {
             return Option::None;
         }
@@ -60,33 +68,45 @@ impl LogEventConvert {
             }
             Event::WRITE_ROWS_EVENT_V1 |
             Event::WRITE_ROWS_EVENT => {
-               return Self::parse_rows_event(log_event.write_rows_log_event().unwrap().event());
+                return self.parse_rows_event(log_event.write_rows_log_event().unwrap().row_log_event());
             }
+            Event::UPDATE_ROWS_EVENT_V1 |
+            Event::PARTIAL_UPDATE_ROWS_EVENT |
+            Event::UPDATE_ROWS_EVENT => {
+                return self.parse_rows_event(log_event.update_rows_log().unwrap().rows_log_event());
+            }
+            Event::DELETE_ROWS_EVENT_V1 |
+            Event::DELETE_ROWS_EVENT => {
+                return self.parse_rows_event(log_event.delete_rows_log_event().unwrap().rows_log_event());
+            }
+            Event::ROWS_QUERY_LOG_EVENT => {
+                self.parse_rows_query_event(log_event.rows_query_log_event().unwrap());
+            }
+
             _ => {}
         }
 
-        Option::Some(Entry::new())
+        Option::None
     }
 
-    fn parse_rows_event(write_rows_log_event: &RowsLogEvent) -> Option<Entry>{
-        Self::parse_rows_event_table_meta(write_rows_log_event, None).unwrap()
+    fn parse_rows_query_event(&self, event: &RowsQueryLogEvent) -> Option<Entry> {
+        todo!()
+    }
+    fn parse_rows_event(&mut self, write_rows_log_event: &RowsLogEvent) -> Option<Entry> {
+        self.parse_rows_event_table_meta(write_rows_log_event, None).unwrap()
     }
 
-    fn parse_rows_event_table_meta(event: &RowsLogEvent, table_meta: Option<TableMeta>) -> StringResult<Option<Entry>>{
-        if let None = table_meta  {
-            todo!()
-        }
-
-        if let None  = table_meta {
-            return Result::Ok(Option::None);
-        }
+    fn parse_rows_event_table_meta(&mut self, event: &RowsLogEvent, mut table_meta: Option<&TableMeta>) -> StringResult<Option<Entry>> {
+        let table = event.table_map_log_event();
+        let full_name = format!("{}.{}", table.dbname().as_ref().unwrap().as_str(), table.tblname().as_ref().unwrap().as_str());
+        let table_meta = self.table_cache.as_mut().unwrap().get_table_meta_by_db(full_name.as_str());
 
         let event_type;
         let kind = event.event().header().kind();
 
-        if Event::WRITE_ROWS_EVENT_V1 == kind || Event::WRITE_ROWS_EVENT == kind{
+        if Event::WRITE_ROWS_EVENT_V1 == kind || Event::WRITE_ROWS_EVENT == kind {
             event_type = EventType::INSERT;
-        } else if Event::UPDATE_ROWS_EVENT_V1 == kind|| Event::UPDATE_ROWS_EVENT == kind||
+        } else if Event::UPDATE_ROWS_EVENT_V1 == kind || Event::UPDATE_ROWS_EVENT == kind ||
             Event::PARTIAL_UPDATE_ROWS_EVENT == kind {
             event_type = EventType::UPDATE;
         } else if Event::DELETE_ROWS_EVENT_V1 == kind || Event::DELETE_ROWS_EVENT == kind {
@@ -99,17 +119,137 @@ impl LogEventConvert {
         change.set_tableId(event.table_id() as i64);
         change.set_isDdl(false);
         change.set_eventType(event_type);
-        // TODO
+        let mut buffer = event.get_rows_buf(self.charset.to_string());
+        let columns = event.columns();
+        let change_columns = event.change_columns();
+        let mut row_change_list = RepeatedField::new();
+        let mut table_error = false;
+        let mut rows_count = 0;
+        while buffer.next_one_row_after(columns, false) {
+            let mut row_data = RowData::new();
+            if EventType::INSERT == event_type {
+                table_error |= self.parse_one_row(&mut row_data, event, &mut buffer, columns, true, table_meta.as_ref());
+            } else if EventType::DELETE == event_type {
+                table_error |= self.parse_one_row(&mut row_data, event, &mut buffer, columns, false, table_meta.as_ref());
+            } else {
+                table_error |= self.parse_one_row(&mut row_data, event, &mut buffer, columns, false, table_meta.as_ref());
+                if !buffer.next_one_row_after(change_columns, true) {
+                    row_change_list.push(row_data);
+                    break;
+                }
+                table_error |= self.parse_one_row(&mut row_data, event, &mut buffer, columns, true, table_meta.as_ref());
+            }
 
-        Result::Ok((Option::Some(Entry::new())))
+            rows_count += 1;
+            row_change_list.push(row_data);
+        }
+        change.set_rowDatas(row_change_list);
+
+        let table = event.table_map_log_event();
+        let header = Self::create_header_rows(event.event().header(),
+                                              table.dbname().clone(),
+                                              table.tblname().clone(),
+                                              Option::Some(event_type),
+                                              rows_count);
+
+
+        if table_error {
+            let entry = Self::create_entry(header, EntryType::ROWDATA, change.write_to_bytes().unwrap());
+            println!("table parser error : {:?}storeValue: {:?}", entry, change);
+            return Result::Ok((Option::None));
+        } else {
+            let entry = Self::create_entry(header, EntryType::ROWDATA, change.write_to_bytes().unwrap());
+            return return Result::Ok((Option::Some(entry)));;
+        }
     }
+
+    fn parse_one_row(&self, row_data: &mut RowData, event: &RowsLogEvent, buffer: &mut RowsLogBuffer, cols: &BitSet, is_after: bool, table_meta: Option<&TableMeta>) -> bool {
+        let column_cont = event.table_map_log_event().column_cnt() as usize;
+        let column_info = event.table_map_log_event().column_info();
+        let mut i = 0;
+        let mut row_data_list = RepeatedField::new();
+        while i < column_cont {
+            let info = &column_info[i];
+            if !cols.contains(i) {
+                continue;
+            }
+            let mut field_meta;
+            if let Option::Some(meta) = table_meta {
+                field_meta = Option::Some(&meta.fields()[i]);
+            } else {
+                field_meta = Option::None
+            }
+
+
+            let mut column = Column::new();
+
+            if let Option::Some(meta) = field_meta {
+                column.set_name(meta.column_name().as_ref().unwrap().to_string());
+                column.set_isKey(meta.key());
+                column.set_mysqlType(meta.column_type().as_ref().unwrap().as_str().to_string());
+                column.set_index(0);
+                column.set_isNull(false);
+                buffer.next_value_is_binary(column.get_name().to_string(), i, info.kind(), info.meta(), false);
+
+                let java_type = buffer.java_type();
+                if buffer.f_null() {
+                    column.set_isNull(true);
+                } else {
+                    let value = buffer.value();
+                    match java_type {
+                        Types::INTEGER
+                        | Types::TINYINT
+                        | Types::SMALLINT
+                        | Types::BIGINT => {
+                            column.set_value(value.value());
+                        }
+                        Types::REAL
+                        | Types::DOUBLE => {
+                            column.set_value(value.value());
+                        }
+                        Types::BIT => {
+                            column.set_value(value.value());
+                        }
+                        Types::DECIMAL => {
+                            column.set_value(value.value());
+                        }
+                        Types::TIMESTAMP |
+                        Types::TIME |
+                        Types::DATE => {
+                            column.set_value(value.value())
+                        }
+                        Types::BINARY |
+                        Types::VARBINARY |
+                        Types::LONGVARBINARY => {
+                           todo!()
+                        }
+                        Types::CHAR |
+                        Types::VARCHAR => {
+                            column.set_value(value.value());
+                        }
+                        _ => {
+                            column.set_value(value.value())
+                        }
+                    }
+                }
+            }
+
+            row_data_list.push(column);
+            field_meta = Option::None;
+            i += 1;
+        }
+
+        row_data.set_afterColumns(row_data_list);
+        false
+    }
+
     fn parse_table_map_event(event: &mut TableMapLogEvent) {
         let charset_dbname = ISO_8859_1.decode(event.dbname().as_ref().unwrap().as_bytes(), DecoderTrap::Strict).unwrap();
         event.set_dbname(Option::Some(charset_dbname));
         let charset_tbname = ISO_8859_1.decode(event.tblname().as_ref().unwrap().as_bytes(), DecoderTrap::Replace).unwrap();
         event.set_tblname(Option::Some(charset_tbname));
     }
-    fn parse_xid_event(event: &XidLogEvent) -> Option<Entry>{
+    fn parse_xid_event(event: &XidLogEvent) -> Option<Entry> {
         let mut end = TransactionEnd::new();
         end.set_transactionId(event.xid().to_string());
         let header = Self::create_header(event.event().header(), Option::Some("".into()), Option::Some("".into()), None);
@@ -128,15 +268,16 @@ impl LogEventConvert {
             begin.set_props(list);
             let header = Self::create_header(event.event().header(), Option::Some("".into()), Option::Some("".into()), None);
             return Option::Some(Self::create_entry(header, EntryType::TRANSACTIONBEGIN, begin.write_to_bytes().unwrap()));
-        } else  if query.starts_with_ignore_case(Self::XA_END) {
+        } else if query.starts_with_ignore_case(Self::XA_END) {
             let mut end = TransactionEnd::new();
             end.set_transactionId("0".into());
             let mut list = RepeatedField::new();
-            list.push(Self::create_special_pair(Self::XA_TYPE.into(),Self::XA_END.into()));
+            list.push(Self::create_special_pair(Self::XA_TYPE.into(), Self::XA_END.into()));
             list.push(Self::create_special_pair(Self::XA_XID.into(), Self::get_xa_xid(query.into(), Self::XA_END.into())));
             end.set_props(list);
             let header = Self::create_header(event.event().header(),
-                                             Option::Some("".into()), Option::Some("".into()), None);
+                                             Option::Some("".into()), Option::Some("".into()), None,
+            );
             return Option::Some(Self::create_entry(header, EntryType::TRANSACTIONEND,
                                                    end.write_to_bytes().unwrap()));
         } else if query.starts_with_ignore_case(Self::XA_COMMIT) {
@@ -162,17 +303,14 @@ impl LogEventConvert {
         } else if query.starts_with_ignore_case(Self::BEGIN) {
             let mut begin = TransactionBegin::new();
             begin.set_threadId(event.session_id() as i64);
-            let header= Self::create_header(event.event().header(), Option::Some("".into()), Option::Some("".into()), None);
-            return Option::Some(Self::create_entry(header.clone(), EntryType::TRANSACTIONBEGIN, header.write_to_bytes().unwrap()));
+            let header = Self::create_header(event.event().header(), Option::Some("".into()), Option::Some("".into()), None);
+            return Option::Some(Self::create_entry(header.clone(), EntryType::TRANSACTIONBEGIN, begin.write_to_bytes().unwrap()));
         } else if query.starts_with_ignore_case(Self::COMMIT) {
             let mut end = TransactionEnd::new();
             end.set_transactionId("0".into());
             let header = Self::create_header(event.event().header(), Option::Some("".into()), Option::Some("".into()), None);
             return Option::Some(Self::create_entry(header, EntryType::TRANSACTIONEND, end.write_to_bytes().unwrap()));
-        } else {
-            todo!()
-        }
-
+        } else {}
         Option::Some(Entry::new())
     }
 

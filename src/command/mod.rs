@@ -274,7 +274,7 @@ fn read_unsigned_short_little_endian(buf: &[u8]) -> u16 {
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_short_little_endian_index(buf: &[u8], index: usize) -> u16 {
-    ((buf[index] & 0xFF) | (((buf[index + 1] & 0xFF) as u8) << 8)) as u16
+    ((buf[index] as u16  & 0xFF) | ((buf[index + 1] as u16 & 0xFF) << 8))
 }
 
 #[allow(arithmetic_overflow)]
@@ -285,7 +285,7 @@ fn read_unsigned_integer_little_endian(buf: &[u8]) -> u32 {
 
 #[allow(arithmetic_overflow)]
 fn read_unsigned_medium_little_endian_index(buf: &[u8], index: usize) -> u32 {
-    ((buf[index] as u32 & 0xFF) | ((buf[index + 1] as u32 & 0xFF) << 8) | ((buf[index + 2] as u32 & 0xFF) << 16)) as u32
+    (buf[index] as u32 & 0xFF) | ((buf[index + 1] as u32 & 0xFF) << 8) | ((buf[index + 2] as u32 & 0xFF) << 16)
 }
 
 #[allow(arithmetic_overflow)]

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::command::get_i64;
 use crate::log::event::LogEvent::{AppendBlockLog, BeginLoadQueryLog, CreateFileLog};
 use crate::log::event;
-use crate::log::log_buffer::LogBuffer;
+use crate::log::log_buffer::{LogBuffer, RowsLogBuffer};
 use crate::StringResult;
 
 
@@ -1685,10 +1685,9 @@ impl QueryLogEvent {
 
         let query_len = data_len - db_len - 1;
         event.dbname = buffer.get_fix_string_len(db_len + 1);
+        // FIXME
         if event.client_charset >= 0 {
-            // TODO CharsetConversion
-            let position = buffer.position();
-            buffer.up_position(position + query_len);
+            event.query =  buffer.get_fix_string_utf8(query_len);
         } else {
             buffer.get_fix_string_len(query_len);
         }
@@ -1949,10 +1948,6 @@ impl RotateLogEvent {
     }
 }
 
-#[derive(Debug)]
-pub struct RowsLogBuffer {
-    event: Event,
-}
 
 #[derive(Debug)]
 pub struct RowsLogEvent {
@@ -2088,6 +2083,10 @@ impl RowsLogEvent {
             flags: 0,
         }
     }
+    pub fn get_rows_buf(&self, charset_name: String) -> RowsLogBuffer{
+        RowsLogBuffer::from(self.rows_buf.clone(), self.column_len, self.json_column_count, charset_name, self.partial)
+    }
+
     pub fn event(&self) -> &Event {
         &self.event
     }
@@ -2143,6 +2142,14 @@ impl RowsQueryLogEvent {
         };
         event.rows_query = Option::Some(buffer.get_full_string_pos_len(offset, len).unwrap());
         Option::Some(event)
+    }
+
+
+    pub fn ignorable_log_event(&self) -> &IgnorableLogEvent {
+        &self.ignorable_log_event
+    }
+    pub fn rows_query(&self) -> &Option<String> {
+        &self.rows_query
     }
 }
 
@@ -2721,6 +2728,41 @@ impl ColumnInfo {
             array: false,
         }
     }
+
+
+    pub fn kind(&self) -> i32 {
+        self.kind
+    }
+    pub fn meta(&self) -> i32 {
+        self.meta
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn unsigned(&self) -> bool {
+        self.unsigned
+    }
+    pub fn pk(&self) -> bool {
+        self.pk
+    }
+    pub fn set_enum_values(&self) -> &Vec<String> {
+        &self.set_enum_values
+    }
+    pub fn charset(&self) -> i32 {
+        self.charset
+    }
+    pub fn geo_type(&self) -> i32 {
+        self.geo_type
+    }
+    pub fn nullable(&self) -> bool {
+        self.nullable
+    }
+    pub fn visibility(&self) -> bool {
+        self.visibility
+    }
+    pub fn array(&self) -> bool {
+        self.array
+    }
 }
 
 impl Clone for ColumnInfo {
@@ -2831,6 +2873,10 @@ impl UpdateRowsLogEvent {
 
     pub fn rows_log_event_mut(&mut self) -> &mut RowsLogEvent {
         &mut self.rows_log_event
+    }
+
+    pub fn rows_log_event(&self) -> &RowsLogEvent {
+        &self.rows_log_event
     }
 }
 
@@ -2964,24 +3010,24 @@ impl ViewChangeEvent {
 
 #[derive(Debug)]
 pub struct WriteRowsLogEvent {
-    event: RowsLogEvent,
+    row_log_event: RowsLogEvent,
 }
 
 impl WriteRowsLogEvent {
     pub fn from(header: &LogHeader, buffer: &mut LogBuffer, description_event: &FormatDescriptionLogEvent) -> Option<Self> {
         let mut event = WriteRowsLogEvent {
-            event: RowsLogEvent::from(header, buffer, description_event, false),
+            row_log_event: RowsLogEvent::from(header, buffer, description_event, false),
         };
         Option::Some(event)
     }
 
 
     pub fn event_mut(&mut self) -> &mut RowsLogEvent {
-        &mut self.event
+        &mut self.row_log_event
     }
 
-    pub fn event(&self) -> &RowsLogEvent {
-        &self.event
+    pub fn row_log_event(&self) -> &RowsLogEvent {
+        &self.row_log_event
     }
 }
 
@@ -3123,6 +3169,18 @@ pub enum LogEvent {
 
 
 impl LogEvent {
+
+    pub fn update_rows_log(&self) -> Option<&UpdateRowsLogEvent> {
+        match self {
+            LogEvent::UpdateRowsLog(e) => {
+                Option::Some(e)
+            }
+            _ => {
+                Option::None
+            }
+        }
+    }
+
     pub fn xid_log_event(&self) -> Option<&XidLogEvent> {
         match self {
             LogEvent::XidLog(e) => {
@@ -3502,7 +3560,7 @@ impl LogEvent {
                 Option::Some(&mut event.event.header)
             }
             LogEvent::RowsLogBuffer(ref mut event) => {
-                Option::Some(&mut event.event.header)
+                Option::None
             }
             LogEvent::RowsLog(ref mut event) => {
                 Option::Some(&mut event.event.header)
@@ -3529,7 +3587,7 @@ impl LogEvent {
                 Option::Some(&mut event.event.header)
             }
             LogEvent::UpdateRowsLog(ref mut event) => {
-                Option::Some(&mut event.rows_log_event.table_map_log_event.event.header)
+                Option::Some(&mut event.rows_log_event.event.header)
             }
             LogEvent::UserVarLog(ref mut event) => {
                 Option::Some(&mut event.event.header)
@@ -3538,7 +3596,7 @@ impl LogEvent {
                 Option::Some(&mut event.event.header)
             }
             LogEvent::WriteRowsLog(ref mut event) => {
-                Option::Some(&mut event.event.event.header)
+                Option::Some(&mut event.row_log_event.event.header)
             }
             LogEvent::XaPrepareLog(ref mut event) => {
                 Option::Some(&mut event.event.header)
@@ -3613,7 +3671,7 @@ impl LogEvent {
                 Option::Some(&mut event.event)
             }
             LogEvent::RowsLogBuffer(ref mut event) => {
-                Option::Some(&mut event.event)
+                Option::None
             }
             LogEvent::RowsLog(ref mut event) => {
                 Option::Some(&mut event.event)
@@ -3649,7 +3707,7 @@ impl LogEvent {
                 Option::Some(&mut event.event)
             }
             LogEvent::WriteRowsLog(ref mut event) => {
-                Option::Some(&mut event.event.event)
+                Option::Some(&mut event.row_log_event.event)
             }
             LogEvent::XaPrepareLog(ref mut event) => {
                 Option::Some(&mut event.event)
@@ -3809,6 +3867,56 @@ pub enum Serializable {
     BYTES(Vec<u8>),
     BigDecimal(BigDecimal),
     Null,
+}
+
+impl Serializable {
+    pub fn value(&self) -> String{
+        match self {
+            Serializable::String(v) => {
+                v.to_string()
+            }
+            Serializable::F64(v) => {
+                v.to_string()
+            }
+            Serializable::I64(v) => {
+                v.to_string()
+            }
+            Serializable::I32(v) => {
+                v.to_string()
+            }
+            Serializable::I16(v) => {
+                v.to_string()
+            }
+            Serializable::I8(v) => {
+                v.to_string()
+            }
+            Serializable::U64(v) => {
+                v.to_string()
+            }
+            Serializable::U32(v) => {
+                v.to_string()
+            }
+            Serializable::U16(v) => {
+                v.to_string()
+            }
+            Serializable::U8(v) => {
+                v.to_string()
+            }
+            Serializable::BYTES(v) => {
+                let mut bytes = String::new();
+                for b in v {
+                    bytes.push_str(b.to_string().as_str())
+                }
+                bytes.to_string()
+            }
+            Serializable::BigDecimal(v) => {
+                v.to_string()
+            }
+            Serializable::Null => {
+                "".to_string()
+            }
+        }
+    }
 }
 
 impl Clone for Serializable {

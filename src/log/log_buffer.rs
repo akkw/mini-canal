@@ -2,10 +2,11 @@ use std::mem;
 use std::str::{from_boxed_utf8_unchecked, FromStr};
 use bigdecimal::BigDecimal;
 use bit_set::BitSet;
+use charsets::Charset;
 use chrono::format::Numeric::Timestamp;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use encoding::{DecoderTrap, Encoding};
-use encoding::all::ISO_8859_1;
+use encoding::all::{ISO_8859_1, UTF_8};
 use substring::Substring;
 // use encoding::DecoderTrap::Strict;
 use crate::channel::TcpSocketChannel;
@@ -32,6 +33,18 @@ pub struct LogBuffer {
     limit: usize,
     position: usize,
     seminal: u8,
+}
+
+impl Clone for LogBuffer {
+    fn clone(&self) -> Self {
+       LogBuffer {
+           buffer: self.buffer.clone(),
+           origin: self.origin,
+           limit: self.limit,
+           position: self.position,
+           seminal: self.seminal
+       }
+    }
 }
 
 impl LogBuffer {
@@ -71,15 +84,17 @@ impl LogBuffer {
         }
 
         let end = self.position + len;
-        self.position = end;
 
-        Result::Ok(LogBuffer {
+
+        let result = Result::Ok(LogBuffer {
             buffer: copy_of_range(&self.buffer, self.position, end),
             origin: 0,
             limit: len,
             position: 0,
             seminal: 0,
-        })
+        });
+        self.position = end;
+        return result;
     }
 
     pub fn duplicate(&self) -> LogBuffer {
@@ -1166,24 +1181,23 @@ impl LogBuffer {
     }
 
     pub fn get_fix_string_utf8(&mut self, len: usize) -> Option<String> {
-        return self.get_fix_string_len_coding(len);
+        return self.get_fix_string_len_coding_utf8(len);
     }
-
-    pub fn get_fix_string_pos_len_coding(&mut self, pos: usize, len: usize) -> Option<String> {
-        if self.check_pos_gre(pos, len) {
-            let from = self.origin + pos;
+    pub fn get_fix_string_len_coding_utf8(&mut self, len: usize) -> Option<String> {
+        if self.check_gre(len) {
+            let from = self.position;
             let end = from + len;
             let mut found = from;
             while (found < end) && self.buffer[found] as char != '\0' {
                 found += 1;
             }
-            let body = &self.buffer[from..found - from];
-            Option::Some(ISO_8859_1.decode(body, DecoderTrap::Strict).unwrap())
+            let body = &self.buffer[from..found];
+            self.position += len;
+            Option::Some(UTF_8.decode(body, DecoderTrap::Strict).unwrap())
         } else {
             Option::None
         }
     }
-
     pub fn get_fix_string_len_coding(&mut self, len: usize) -> Option<String> {
         if self.check_gre(len) {
             let from = self.position;
@@ -1199,6 +1213,22 @@ impl LogBuffer {
             Option::None
         }
     }
+    pub fn get_fix_string_pos_len_coding(&mut self, pos: usize, len: usize) -> Option<String> {
+        if self.check_pos_gre(pos, len) {
+            let from = self.origin + pos;
+            let end = from + len;
+            let mut found = from;
+            while (found < end) && self.buffer[found] as char != '\0' {
+                found += 1;
+            }
+            let body = &self.buffer[from..found - from];
+            Option::Some(ISO_8859_1.decode(body, DecoderTrap::Strict).unwrap())
+        } else {
+            Option::None
+        }
+    }
+
+
 
     pub fn get_full_string_pos_len(&self, pos: usize, len: usize) -> Option<String> {
         if self.check_pos_gre(pos, len) {
@@ -1211,7 +1241,7 @@ impl LogBuffer {
 
     pub fn get_full_string_len(&mut self, len: usize) -> Option<String> {
         if self.check_gre(len) {
-            let body = &self.buffer[self.position..len];
+            let body = &self.buffer[self.position..self.position+len];
             let value = Option::Some(ISO_8859_1.decode(body, DecoderTrap::Strict).unwrap());
             self.position += len;
             value
@@ -1773,8 +1803,8 @@ fn copy_of_range(buffer: &Vec<u8>, from: usize, to: usize) -> Vec<u8> {
     }
     bytes
 }
-
-struct RowsLogBuffer {
+#[derive(Debug)]
+pub struct RowsLogBuffer {
     buffer: LogBuffer,
     column_len: usize,
     json_column_count: i32,
@@ -1791,6 +1821,7 @@ struct RowsLogBuffer {
 
 
 impl RowsLogBuffer {
+
     const DATETIMEF_INT_OFS: i64 = 0x8000000000;
     const TIMEF_INT_OFS: u64 = 0x800000;
     const TIMEF_OFS: u64 = 0x800000000000;
@@ -1814,11 +1845,11 @@ impl RowsLogBuffer {
         }
     }
 
-    pub fn next_one_row(&mut self, columns: BitSet) -> bool {
+    pub fn next_one_row(&mut self, columns: &BitSet) -> bool {
         self.next_one_row_after(columns, false)
     }
 
-    pub fn next_one_row_after(&mut self, columns: BitSet, after: bool) -> bool {
+    pub fn next_one_row_after(&mut self, columns: &BitSet, after: bool) -> bool {
         let has_one_row = self.buffer.has_remaining();
 
         if has_one_row {
@@ -2639,6 +2670,20 @@ impl RowsLogBuffer {
 
         Result::Ok(sec.substring(0, meta as usize).to_string())
     }
+    pub fn java_type(&self) -> i32 {
+        self.java_type
+    }
+
+    pub fn f_null(&self) -> bool {
+        self.f_null
+    }
+
+
+    pub fn value(&self) -> &Serializable {
+        &self.value
+    }
+
+
 }
 
 

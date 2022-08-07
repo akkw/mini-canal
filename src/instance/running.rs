@@ -1,4 +1,5 @@
 use crate::channel::mysql_socket::{MysqlConnection};
+use crate::instance::table_meta_cache::TableMetaCache;
 use crate::log::metadata::EntryPosition;
 use crate::log::parser::{LogEventConvert};
 use crate::parse::support::AuthenticationInfo;
@@ -14,6 +15,7 @@ pub struct MysqlEventParser {
 }
 
 impl MysqlEventParser {
+
     pub fn from(authentication_info: AuthenticationInfo) -> MysqlEventParser {
         MysqlEventParser {
             database_info: Option::Some(authentication_info),
@@ -29,16 +31,16 @@ impl MysqlEventParser {
     pub fn start(&mut self) where {
         self.running = true;
         // while self.running {
-        let mut connection = build_connection(self.database_info.as_ref().unwrap().address(),
+        let mut dump_connection = build_connection(self.database_info.as_ref().unwrap().address(),
                                               self.database_info.as_ref().unwrap().port(),
                                               self.database_info.as_ref().unwrap().username(),
                                               self.database_info.as_ref().unwrap().password(),
                                               self.database_info.as_ref().unwrap().default_database_name());
-        self.pre_dump(&connection);
+        self.pre_dump(&mut dump_connection);
 
-        connection.connect();
+        dump_connection.connect();
 
-        let server_id = connection.query_server_id();
+        let server_id = dump_connection.query_server_id();
         if server_id > 0 {
             self.server_id = server_id;
         }
@@ -49,19 +51,19 @@ impl MysqlEventParser {
             position = self.find_start_position().unwrap();
         }
 
+        dump_connection.reconnect();
+        dump_connection.at_dump_sink(position.journal_name().clone().unwrap().as_str(), position.position().unwrap())
 
-
-        connection.reconnect();
-
-
-        connection.at_dump_sink(position.journal_name().clone().unwrap().as_str(), position.position().unwrap())
-        // }
     }
 
 
-    fn pre_dump(&mut self, connection: &MysqlConnection) {
+    fn pre_dump(&mut self, connection: &mut MysqlConnection) {
         self.meta_connection = Option::Some(connection.fork());
-
+        let mut connect = connection.fork();
+        connect.connect();
+        let cache = TableMetaCache::from(Option::Some(connect));
+        let convert = LogEventConvert::from(cache);
+        connection.set_binlog_parse(Box::from(convert));
         self.meta_connection.as_mut().unwrap().connect();
     }
 

@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::str::{from_utf8};
+use protobuf::Message;
 use crate::channel::{TcpChannel, TcpSocketChannel};
 use crate::channel::read_write_packet::{*};
 use crate::channel::sql_utils::{MysqlQueryExecutor, MysqlUpdateExecutor};
@@ -10,7 +11,9 @@ use crate::command::client::{*};
 use crate::log::decoder::LogDecoder;
 use crate::log::event::{Event, FormatDescriptionLogEvent, LogContext};
 use crate::log::log_buffer::DirectLogFetcher;
+use crate::log::parser::LogEventConvert;
 use crate::parse::support::AuthenticationInfo;
+use crate::protocol::mini_canal_entry::{EntryType, RowChange};
 
 
 const DEFAULT_CHARSET_NUMBER: u8 = 33;
@@ -368,6 +371,7 @@ pub struct MysqlConnection {
     auth_info: AuthenticationInfo,
     received_binlog_bytes: AtomicI64,
     binlog_checksum: u8,
+    binlog_parse: Box<LogEventConvert>,
 }
 
 
@@ -422,6 +426,7 @@ impl MysqlConnection {
             auth_info: AuthenticationInfo::new(),
             received_binlog_bytes: Default::default(),
             binlog_checksum: Event::BINLOG_CHECKSUM_ALG_OFF,
+            binlog_parse: Box::from(LogEventConvert::new()),
         }
     }
 
@@ -456,9 +461,28 @@ impl MysqlConnection {
         context.set_description_event(FormatDescriptionLogEvent::from_binlog_version_binlog_check_sum(4, self.binlog_checksum));
         while fetcher.fetch().unwrap() {
             let mut event = decoder.decode(fetcher.log_buffer(), &mut context);
-            println!("event: {:?}", event);
+            // println!("event: {:?}", event);
+            if let Option::Some(entry) = self.binlog_parse.parse(&mut event, false) {
+                if entry.get_entryType() == EntryType::TRANSACTIONBEGIN
+                    || entry.get_entryType() == EntryType::TRANSACTIONEND
+                    || entry.get_entryType() == EntryType::HEARTBEAT {
+                    continue;
+                }
+                let change = RowChange::parse_from_bytes(entry.get_storeValue()).unwrap();
+                println!("tableId: {}, tableNName: {}, eventType: {:?}", change.get_tableId(), entry.get_header().tableName, change.get_eventType());
+                println!("binlogFile: {}, binlogPos: {}, ", entry.get_header().logfileName, entry.get_header().logfileOffset);
 
+                let row_data = change.get_rowDatas();
 
+                for data in row_data {
+                    for column in &data.afterColumns {
+                        println!("name: {}, value: {}, type: {}", column.name, column.value, column.mysqlType)
+                    }
+                }
+                println!("                        ");
+                println!("########################");
+                println!("                        ");
+            }
             let semival = event.event_mut().unwrap();
             if semival.semival() == 1 {
                 println!("send semival!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
@@ -558,6 +582,9 @@ impl MysqlConnection {
         let result = query_packet.query(sql);
         let packet = result.unwrap();
         packet
+    }
+    pub fn set_binlog_parse(&mut self, binlog_parse: Box<LogEventConvert>) {
+        self.binlog_parse = binlog_parse;
     }
 }
 

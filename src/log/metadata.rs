@@ -155,6 +155,17 @@ pub struct TableMeta {
     ddl: Option<String>,
 }
 
+impl Clone for TableMeta {
+    fn clone(&self) -> Self {
+        Self {
+            schema: self.schema.clone(),
+            table: self.table.clone(),
+            fields: self.fields.clone(),
+            ddl: self.ddl.clone()
+        }
+    }
+}
+
 impl TableMeta {
     pub fn from(schema: Option<String>, table: Option<String>, fields: Vec<FieldMeta>) -> Self {
         Self {
@@ -234,6 +245,18 @@ pub struct FieldMeta {
     nullable: bool,
     key: bool,
     default_value: Option<String>,
+}
+
+impl Clone for FieldMeta {
+    fn clone(&self) -> Self {
+        Self{
+            column_name: self.column_name.clone(),
+            column_type: self.column_type.clone(),
+            nullable: self.nullable,
+            key: self.key,
+            default_value: self.default_value.clone()
+        }
+    }
 }
 
 impl Display for FieldMeta {
