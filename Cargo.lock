@@ -159,6 +159,7 @@ dependencies = [
  "protobuf",
  "protobuf-codegen-pure",
  "sha1_smol",
+ "sql-parse",
  "str-utils",
  "substring",
  "uuid",
@@ -335,6 +336,11 @@ name = "sha1_smol"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae1a47186c03a32177042e55dbc5fd5aee900b8e0069a8d70fba96a9375cd012"
+
+[[package]]
+name = "sql-parse"
+version = "0.8.0"
+source = "git+https://github.com/antialize/sql-parse#7869595aa92aed0bb5a45b1a5716eca9af8f11d7"
 
 [[package]]
 name = "str-utils"
